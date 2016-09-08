@@ -19,6 +19,10 @@
 
 #include <stddef.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef struct TC_String
 {
     size_t len;
@@ -41,12 +45,33 @@ size_t tcstr_utf8_find_char(const TC_String* str, size_t off);
 size_t tcstr_utf8_prev_off(const TC_String* str, size_t off);
 size_t tcstr_utf8_next_off(const TC_String* str, size_t off);
 
+#ifdef __cplusplus
+}
+#endif
+
 #endif /* TC_STRING_H_ */
 
 #ifdef TC_STRING_IMPLEMENTATION
 #undef TC_STRING_IMPLEMENTATION
 #include <stdlib.h>
 #include <string.h>
+
+#ifndef TC__STATIC_CAST
+#ifdef __cplusplus
+#define TC__STATIC_CAST(T,v) static_cast<T>(v)
+#else
+#define TC__STATIC_CAST(T,v) ((T)(v))
+#endif
+#endif /* TC__STATIC_CAST */
+
+/* no cast done to preserve undefined function warnings in C */
+#ifndef TC__VOID_CAST
+#ifdef __cplusplus
+#define TC__VOID_CAST(T,v)  TC__STATIC_CAST(T,v)
+#else
+#define TC__VOID_CAST(T,v)  (v)
+#endif
+#endif /* TC__VOID_CAST */
 
 TC_String* tcstr_init(TC_String* str, const TC_String* src)
 {
@@ -59,14 +84,14 @@ TC_String* tcstr_init(TC_String* str, const TC_String* src)
     else if(src->ptr)
     {
         str->len = src->len;
-        str->ptr = malloc(src->len + 1);
+        str->ptr = TC__VOID_CAST(char*,malloc(src->len + 1));
         memcpy(str->ptr, src->ptr, src->len);
         str->ptr[src->len] = 0;
     }
     else
     {
         str->len = 0;
-        str->ptr = malloc(str->len + 1);
+        str->ptr = TC__VOID_CAST(char*,malloc(str->len + 1));
         str->ptr[str->len] = 0;
     }
     return str;
@@ -79,14 +104,14 @@ TC_String* tcstr_inits(TC_String* str, const char* ptr, int len)
         if(len < 0) len = strlen(ptr);
 
         str->len = len;
-        str->ptr = malloc(len + 1);
+        str->ptr = TC__VOID_CAST(char*,malloc(len + 1));
         memcpy(str->ptr, ptr, len);
         str->ptr[len] = 0;
     }
     else if(len >= 0)
     {
         str->len = len;
-        str->ptr = malloc(len + 1);
+        str->ptr = TC__VOID_CAST(char*,malloc(len + 1));
         str->ptr[len] = 0;
     }
     else
@@ -134,11 +159,11 @@ TC_String* tcstr_splice(TC_String* str, size_t pos, size_t del, const TC_String*
     //      ^ ^^    P DL
     memmove(str->ptr + pos + src->len, str->ptr + pos + del, nlen - pos - src->len);
     if(nlen > str->len)
-        str->ptr = realloc(str->ptr, nlen + 1);
+        str->ptr = TC__VOID_CAST(char*,realloc(str->ptr, nlen + 1));
     // 01234---789%
     memmove(str->ptr + pos, src->ptr, src->len);
     if(nlen < str->len)
-        str->ptr = realloc(str->ptr, nlen + 1);
+        str->ptr = TC__VOID_CAST(char*,realloc(str->ptr, nlen + 1));
     // 01234abc789%
     str->ptr[nlen] = 0;
     str->len = nlen;

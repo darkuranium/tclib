@@ -20,6 +20,10 @@
 #include <stdio.h>
 #include <stdarg.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define TCTERM_FG_RED       0x01
 #define TCTERM_FG_GREEN     0x02
 #define TCTERM_FG_BLUE      0x04
@@ -71,7 +75,7 @@ enum TC_TermKeys
     TCTERM_KEY_PAGE_UP,
     TCTERM_KEY_PAGE_DOWN,
 
-    TCTERM_KEY_BACKSPACE,
+    TCTERM_KEY_BACKSPACE
 };
 
 int tcterm_init_stdio(void);
@@ -105,6 +109,10 @@ int tcterm_fprintf(int stream, const char* format, ...);
 int tcterm_vprintf(const char* format, va_list args);
 int tcterm_printf(const char* format, ...);
 
+#ifdef __cplusplus
+}
+#endif
+
 #endif /* TC_TERMINAL_H_ */
 
 #ifdef TC_TERMINAL_IMPLEMENTATION
@@ -118,6 +126,23 @@ int tcterm_printf(const char* format, ...);
 #include <termios.h>
 #include <unistd.h> /* currently for *_FILENO */
 #endif
+
+#ifndef TC__STATIC_CAST
+#ifdef __cplusplus
+#define TC__STATIC_CAST(T,v) static_cast<T>(v)
+#else
+#define TC__STATIC_CAST(T,v) ((T)(v))
+#endif
+#endif /* TC__STATIC_CAST */
+
+/* no cast done to preserve undefined function warnings in C */
+#ifndef TC__VOID_CAST
+#ifdef __cplusplus
+#define TC__VOID_CAST(T,v)  TC__STATIC_CAST(T,v)
+#else
+#define TC__VOID_CAST(T,v)  (v)
+#endif
+#endif /* TC__VOID_CAST */
 
 static struct
 {
@@ -564,7 +589,7 @@ int tcterm_fprint(int stream, const char* str, int len)
     if(!len) return 0;
 
 #ifdef _WIN32
-    wchar_t* wstr = malloc((len + 1) * sizeof(wchar_t));
+    wchar_t* wstr = TC__VOID_CAST(wchar_t*,malloc((len + 1) * sizeof(wchar_t)));
 
     int wlen = MultiByteToWideChar(CP_UTF8, 0, str, len, wstr, len + 1);
 
@@ -615,7 +640,7 @@ int tcterm_vfprintf(int stream, const char* format, va_list args)
 
     if(rlen < 0) return -1;
 
-    char* buf = malloc(rlen + 1);
+    char* buf = TC__VOID_CAST(char*,malloc(rlen + 1));
     int alen = vsnprintf(buf, rlen + 1, format, args);
 
     if(rlen != alen)

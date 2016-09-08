@@ -17,13 +17,16 @@
 
 #include "tc_string.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 struct TC__HistoryEntry;
 typedef struct TC_History
 {
     int maxlen;
     size_t mem, head, tail;
     struct TC__HistoryEntry* entries;
-    TC_String tmp;
 
     size_t vpos, hpos;
 } TC_History;
@@ -44,10 +47,31 @@ void tchist_str_delete(TC_History* hist, int len);
 void tchist_str_clear(TC_History* hist);
 TC_String* tchist_exec(TC_History* hist);
 
+#ifdef __cplusplus
+}
+#endif
+
 #endif /* TC_HISTORY_H_ */
 
 #ifdef TC_HISTORY_IMPLEMENTATION
 #undef TC_HISTORY_IMPLEMENTATION
+
+#ifndef TC__STATIC_CAST
+#ifdef __cplusplus
+#define TC__STATIC_CAST(T,v) static_cast<T>(v)
+#else
+#define TC__STATIC_CAST(T,v) ((T)(v))
+#endif
+#endif /* TC__STATIC_CAST */
+
+/* no cast done to preserve undefined function warnings in C */
+#ifndef TC__VOID_CAST
+#ifdef __cplusplus
+#define TC__VOID_CAST(T,v)  TC__STATIC_CAST(T,v)
+#else
+#define TC__VOID_CAST(T,v)  (v)
+#endif
+#endif /* TC__VOID_CAST */
 
 typedef struct TC__HistoryEntry
 {
@@ -77,7 +101,12 @@ static size_t tchist__get_next_idx(TC_History* hist, size_t idx)
 
 TC_History* tchist_init(TC_History* hist, int maxlen)
 {
-    static const TC__HistoryEntry eentry = { { 0 } };
+#ifdef __cplusplus
+    /* goddamnit for making me do this because you absolutely need -Wextra! (you know who you are) */
+    static const TC__HistoryEntry eentry = TC__HistoryEntry();
+#else
+    static const TC__HistoryEntry eentry;
+#endif
 
     if(!hist) return NULL;
 
@@ -87,10 +116,8 @@ TC_History* tchist_init(TC_History* hist, int maxlen)
     hist->tail = 1;
     hist->vpos = tchist__get_tail_idx(hist);
     hist->hpos = 0;
-    //hist->tmp.ptr = NULL;
-    //hist->tmp.len = 0;
 
-    hist->entries = malloc(hist->mem * sizeof(*hist->entries));
+    hist->entries = TC__VOID_CAST(TC__HistoryEntry*,malloc(hist->mem * sizeof(*hist->entries)));
 
     size_t i;
     for(i = 0; i < hist->mem; i++)
@@ -191,6 +218,8 @@ void tchist_str_clear(TC_History* hist)
 }
 TC_String* tchist_exec(TC_History* hist)
 {
+    static char emptystr[] = "";
+    static TC_String empty = { 0, emptystr };
     TC__HistoryEntry* tentry = &hist->entries[tchist__get_tail_idx(hist)];
     TC__HistoryEntry* entry = &hist->entries[hist->vpos];
 
@@ -199,10 +228,7 @@ TC_String* tchist_exec(TC_History* hist)
     {
         tcstr_reinit(&entry->edit, &entry->orig);
         tchist_cmd_hmove_full(hist, -1);
-
-        hist->tmp.ptr = (char*)"";
-        hist->tmp.len = 0;
-        return &hist->tmp;
+        return &empty;
     }
 
     if(entry == tentry)

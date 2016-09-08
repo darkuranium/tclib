@@ -23,9 +23,17 @@
 
 #include "tc_string.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 int tcedit_attach_stdio(int histlen);
 int tcedit_detach(void);
 TC_String* tcedit_readline(const char* prompt, int promptlen, int (*echo)(TC_String* str, size_t hpos));
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* TC_EDITLINE_H_ */
 
