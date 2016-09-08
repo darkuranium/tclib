@@ -2,10 +2,14 @@
  * tc_history.h: Simple terminal history handling.
  *
  * DEPENDS: tc_string
- * VERSION: 0.0.1 (2016-09-07)
+ * VERSION: 0.0.2 (2016-09-08)
  * LICENSE: CC0 & Boost (dual-licensed)
  * AUTHOR: Tim Cas
  * URL: https://github.com/darkuranium/tclib
+ *
+ * VERSION HISTORY:
+ * 0.0.2    made the library compile with a C++ compiler
+ * 0.0.1    initial public release
  *
  * TODOs:
  * - read history from file or stream
