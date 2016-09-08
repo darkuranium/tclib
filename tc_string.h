@@ -11,11 +11,126 @@
  * 0.0.2    made the library compile with a C++ compiler
  * 0.0.1    initial public release
  *
- * TODOs:
- * - add tests
- * - implement char<->UTF-8 conversion (TBD: should this be part of the console lib instead?)
- * - implement tcstr_utf8_find_offset
- * - add an option for custom malloc(), realloc(), free(), memcpy(), memmove()
+ *
+ *
+ * This library contains some common string handling functions.
+ *
+ * A single file should contain the following `#define` before including the header:
+ *  ```c
+ *  #define TC_STRING_IMPLEMENTATION
+ *  #include "tc_string.h"
+ *  ```
+ *
+ * It is primarily (but not exclusively) meant for internal use by other TCLib libraries;
+ * as such, some of the features might seem out of place, while others might be missing.
+ */
+
+/* ========== API ==========
+ *
+ * SYNOPSIS:
+ *  TC_String* tcstr_init(TC_String* str, const TC_String* src);
+ *  TC_String* tcstr_inits(TC_String* str, const char* ptr, int len);
+ * PARAMETERS:
+ *  - str: string being initialized
+ *  - src,ptr: source string being copied
+ *  - len: length of source string (in bytes), or `-1` to determine automatically (via `strlen(ptr)`)
+ * RETURN VALUE:
+ *  `str` if successful, else `NULL`.
+ * DESCRIPTION:
+ *  Initialize `str` with the value from `src` or `ptr`/`len`.
+ *
+ *  Strings are always `0`-terminated for convenience, with the exception of null strings (those with `.ptr=NULL`).
+ *
+ *  - If `src != NULL`, then initialize `str` with its contents; else set `str` to the null string.
+ *  - If `ptr != NULL`, then initialize `str` with its contents of length `len` or `strlen(ptr)`.
+ *  - If `ptr == NULL`:
+ *      - if `len >= 0`, allocate an uninitialized string of length `len`;
+ *      - if `len < 0`, set `str` to the null string.
+ *
+ *
+ * SYNOPSIS:
+ *  void tcstr_deinit(TC_String* str);
+ * PARAMETERS:
+ *  - str: string being deinitialized
+ * DESCRIPTION:
+ *  Free the data contained by `str`.
+ *
+ *  It should not be used anymore, except with the `tcstr_init` family of functions.
+ *
+ *
+ * SYNOPSIS:
+ *  TC_String* tcstr_reinit(TC_String* str, const TC_String* src);
+ *  TC_String* tcstr_reinits(TC_String* str, const char* ptr, int len);
+ * PARAMETERS:
+ *  Same as in `tcstr_init`.
+ * RETURN VALUE:
+ *  `str` if successful, else `NULL`.
+ * DESCRIPTION:
+ *  Reinitialize a string, freeing old data.
+ *
+ *  This is the same as calling `tcstr_deinit(str); tcstr_init(str, src);`
+ *
+ *
+ * SYNOPSIS:
+ *  TC_String* tcstr_splice(TC_String* str, size_t pos, size_t del, const TC_String* src);
+ *  TC_String* tcstr_splices(TC_String* str, size_t pos, size_t del, const char* ptr, int len);
+ * PARAMETERS:
+ *  - str: string being spliced (in-place)
+ *  - pos: starting position (byte offset) of the splice
+ *  - del: number of characters to delete, in bytes
+ *  - src, ptr, len: mostly the same as in `tcstr_init`; NULL values are the same as empty strings.
+ * RETURN VALUE:
+ *  `str` if successful, else `NULL`.
+ * DESCRIPTION:
+ *  `del` bytes are removed from `str` starting at `pos`, and then `src` or `ptr`/`len` is inserted at the same position.
+ *
+ *  Both `pos` and `del` are truncated to the end of `str` if necessary.
+ * EXAMPLES:
+ *  ```c
+ *  // str = { .ptr="0123456789", .len=10 }
+ *  //                    ^ pos
+ *  //                       ^ pos+del
+ *  tcstr_splice(&str, 5, 3, "abcde", 5);
+ *  // str.ptr is now "01234abcde89"
+ *  ```
+ *  ```c
+ *  // str = { .ptr="hello, world", .len=12 }
+ *  tcstr_splice(&str, 2, 3, NULL, 0);
+ *  // str.ptr is now "he, world"
+ *  ```
+ *  ```c
+ *  // str = { .ptr="hello, world", .len=12 }
+ *  tcstr_splice(&str, 7, 0, "abc ", -1);
+ *  // str.ptr is now "hello, abc world"
+ *  ```
+ *
+ *
+ * SYNOPSIS:
+ *  size_t tcstr_utf8_find_offset(const TC_String* str, size_t chr);
+ *  size_t tcstr_utf8_find_char(const TC_String* str, size_t off);
+ * PARAMETERS:
+ *  - str: operand string
+ *  - chr: code point offset
+ *  - off: byte offset
+ * RETURN VALUE:
+ *  - `tcstr_utf8_find_offset` returns the byte offset for `chr`-th Unicode code point.
+ *  - `tcstr_utf8_find_char` does the opposite, returning the number of code points leading up to a specific byte offset.
+ * DESCRIPTION:
+ *  Find the byte offset to the start of a specific Unicode code point, or vice-versa.
+ *
+ *  ***Please note that `tcstr_utf8_find_offset` is currently unimplemented.***
+ *
+ *
+ * SYNOPSIS:
+ *  size_t tcstr_utf8_prev_off(const TC_String* str, size_t off);
+ *  size_t tcstr_utf8_next_off(const TC_String* str, size_t off);
+ * PARAMETERS:
+ *  - str: operand string
+ *  - off: byte offset
+ * RETURN VALUE:
+ *  Start of the found character, 0 if no previous character exists, or `str->len` if no next character exists.
+ * DESCRIPTION:
+ *  Find the start byte offset of the next or previous Unicode character in the string.
  */
 
 #ifndef TC_STRING_H_
