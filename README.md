@@ -4,7 +4,7 @@
 
 A set of single-file public domain libraries done in the spirit of the [stb libraries](https://github.com/nothings/stb).
 
-Note that, unlike said stb libraries, far more of these have dependencies. To see the dependencies, check the "`DEPENDS:`" line near the top of each file.
+Note that some of the libraries have dependencies. For a quick reference see the "`DEPENDS:`" line near the top of each file.
 
 The following libraries are currently available (*all are currently **alpha version***). The prefix ("`tc_`") is subject to change until stable release.
 
