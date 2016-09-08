@@ -42,17 +42,18 @@ Target OSes are Windows, Linux, FreeBSD and Mac OS X. Note that I do not current
 - `tc_editline.h`:
     - multiline support
     - callback(s) for tab key completion and hints
-		- proposed event handler:
-          ```c
-          typedef struct TC_EditEvent {
-              int type;
-              TC_String* input;
-              size_t byte_pos, char_pos;
-          } TC_EditEvent;
-          int (*)(TC_EditEvent* event);
-          ```
+        - proposed event handler:
+
+              ```c
+              typedef struct TC_EditEvent {
+                  int type;
+                  TC_String* input;
+                  size_t byte_pos, char_pos;
+              } TC_EditEvent;
+              int (*)(TC_EditEvent* event);
+              ```
 
 ## Screenshots:
 
-Editline:\
+Editline:
 ![editline](screenshots/editline.png)
