@@ -153,6 +153,13 @@ int tcterm_printf(const char* format, ...);
 #endif
 #endif /* TC__VOID_CAST */
 
+#ifndef TC_MALLOC
+#define TC_MALLOC(size)         malloc(size)
+#endif /* TC_MALLOC */
+#ifndef TC_FREE
+#define TC_FREE(ptr)            free(ptr)
+#endif /* TC_FREE */
+
 static struct
 {
     int initcount;
@@ -613,19 +620,19 @@ int tcterm_fprint(int stream, const char* str, int len)
     if(!len) return 0;
 
 #ifdef _WIN32
-    wchar_t* wstr = TC__VOID_CAST(wchar_t*,malloc((len + 1) * sizeof(wchar_t)));
+    wchar_t* wstr = TC__VOID_CAST(wchar_t*,TC_MALLOC((len + 1) * sizeof(wchar_t)));
 
     int wlen = MultiByteToWideChar(CP_UTF8, 0, str, len, wstr, len + 1);
 
     if(!wlen)
     {
-        free(wstr);
+        TC_FREE(wstr);
         return -1;
     }
 
     DWORD written;
     BOOL ok = WriteConsoleW(tcterm__ctx.wh[stream], wstr, wlen, &written, NULL);
-    free(wstr);
+    TC_FREE(wstr);
     if(!ok) return -1;
 
     return written;
@@ -664,18 +671,18 @@ int tcterm_vfprintf(int stream, const char* format, va_list args)
 
     if(rlen < 0) return -1;
 
-    char* buf = TC__VOID_CAST(char*,malloc(rlen + 1));
+    char* buf = TC__VOID_CAST(char*,TC_MALLOC(rlen + 1));
     int alen = vsnprintf(buf, rlen + 1, format, args);
 
     if(rlen != alen)
     {
-        free(buf);
+        TC_FREE(buf);
         return -1;
     }
 
     alen = tcterm_fprint(stream, buf, alen);
 
-    free(buf);
+    TC_FREE(buf);
     return alen;
 }
 int tcterm_fprintf(int stream, const char* format, ...)

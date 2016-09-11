@@ -2,7 +2,7 @@
  * tc_history.h: Simple terminal history handling.
  *
  * DEPENDS: tc_string
- * VERSION: 0.0.2 (2016-09-08)
+ * VERSION: 0.0.3 (2016-09-11)
  * LICENSE: CC0 & Boost (dual-licensed)
  * AUTHOR: Tim Cas
  * URL: https://github.com/darkuranium/tclib
@@ -78,6 +78,13 @@ TC_String* tchist_exec(TC_History* hist);
 #endif
 #endif /* TC__VOID_CAST */
 
+#ifndef TC_MALLOC
+#define TC_MALLOC(size)         malloc(size)
+#endif /* TC_MALLOC */
+#ifndef TC_FREE
+#define TC_FREE(ptr)            free(ptr)
+#endif /* TC_FREE */
+
 typedef struct TC__HistoryEntry
 {
     TC_String orig, edit;
@@ -122,7 +129,7 @@ TC_History* tchist_init(TC_History* hist, int maxlen)
     hist->vpos = tchist__get_tail_idx(hist);
     hist->hpos = 0;
 
-    hist->entries = TC__VOID_CAST(TC__HistoryEntry*,malloc(hist->mem * sizeof(*hist->entries)));
+    hist->entries = TC__VOID_CAST(TC__HistoryEntry*,TC_MALLOC(hist->mem * sizeof(*hist->entries)));
 
     size_t i;
     for(i = 0; i < hist->mem; i++)
@@ -140,7 +147,7 @@ void tchist_deinit(TC_History* hist)
         tcstr_deinit(&hist->entries[i].orig);
         tcstr_deinit(&hist->entries[i].edit);
     }
-    free(hist->entries);
+    TC_FREE(hist->entries);
 }
 
 TC_String* tchist_get_string(TC_History* hist)

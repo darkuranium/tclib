@@ -190,6 +190,23 @@ size_t tcstr_utf8_next_off(const TC_String* str, size_t off);
 #endif
 #endif /* TC__VOID_CAST */
 
+#ifndef TC_MALLOC
+#define TC_MALLOC(size)         malloc(size)
+#endif /* TC_MALLOC */
+#ifndef TC_REALLOC
+#define TC_REALLOC(ptr,size)    realloc(ptr, size)
+#endif /* TC_REALLOC */
+#ifndef TC_FREE
+#define TC_FREE(ptr)            free(ptr)
+#endif /* TC_FREE */
+
+#ifndef TC_MEMCPY
+#define TC_MEMCPY(dst,src,len)  memcpy(dst, src, len)
+#endif /* TC_MEMCPY */
+#ifndef TC_MEMMOVE
+#define TC_MEMMOVE(dst,src,len) memmove(dst, src, len)
+#endif /* TC_MEMMOVE */
+
 TC_String* tcstr_init(TC_String* str, const TC_String* src)
 {
     if(!str) return NULL;
@@ -201,14 +218,14 @@ TC_String* tcstr_init(TC_String* str, const TC_String* src)
     else if(src->ptr)
     {
         str->len = src->len;
-        str->ptr = TC__VOID_CAST(char*,malloc(src->len + 1));
-        memcpy(str->ptr, src->ptr, src->len);
+        str->ptr = TC__VOID_CAST(char*,TC_MALLOC(src->len + 1));
+        TC_MEMCPY(str->ptr, src->ptr, src->len);
         str->ptr[src->len] = 0;
     }
     else
     {
         str->len = 0;
-        str->ptr = TC__VOID_CAST(char*,malloc(str->len + 1));
+        str->ptr = TC__VOID_CAST(char*,TC_MALLOC(str->len + 1));
         str->ptr[str->len] = 0;
     }
     return str;
@@ -221,14 +238,14 @@ TC_String* tcstr_inits(TC_String* str, const char* ptr, int len)
         if(len < 0) len = strlen(ptr);
 
         str->len = len;
-        str->ptr = TC__VOID_CAST(char*,malloc(len + 1));
-        memcpy(str->ptr, ptr, len);
+        str->ptr = TC__VOID_CAST(char*,TC_MALLOC(len + 1));
+        TC_MEMCPY(str->ptr, ptr, len);
         str->ptr[len] = 0;
     }
     else if(len >= 0)
     {
         str->len = len;
-        str->ptr = TC__VOID_CAST(char*,malloc(len + 1));
+        str->ptr = TC__VOID_CAST(char*,TC_MALLOC(len + 1));
         str->ptr[len] = 0;
     }
     else
@@ -242,7 +259,7 @@ void tcstr_deinit(TC_String* str)
 {
     if(!str) return;
     if(str->ptr)
-        free(str->ptr);
+        TC_FREE(str->ptr);
 }
 
 TC_String* tcstr_reinit(TC_String* str, const TC_String* src)
@@ -274,13 +291,13 @@ TC_String* tcstr_splice(TC_String* str, size_t pos, size_t del, const TC_String*
 
     // 0123456789-%
     //      ^ ^^    P DL
-    memmove(str->ptr + pos + src->len, str->ptr + pos + del, nlen - pos - src->len);
+    TC_MEMMOVE(str->ptr + pos + src->len, str->ptr + pos + del, nlen - pos - src->len);
     if(nlen > str->len)
-        str->ptr = TC__VOID_CAST(char*,realloc(str->ptr, nlen + 1));
+        str->ptr = TC__VOID_CAST(char*,TC_REALLOC(str->ptr, nlen + 1));
     // 01234---789%
-    memmove(str->ptr + pos, src->ptr, src->len);
+    TC_MEMMOVE(str->ptr + pos, src->ptr, src->len);
     if(nlen < str->len)
-        str->ptr = TC__VOID_CAST(char*,realloc(str->ptr, nlen + 1));
+        str->ptr = TC__VOID_CAST(char*,TC_REALLOC(str->ptr, nlen + 1));
     // 01234abc789%
     str->ptr[nlen] = 0;
     str->len = nlen;
