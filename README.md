@@ -10,10 +10,10 @@ The following libraries are currently available (*all are currently* ***alpha ve
 
 | Library       | Version | Description                                                       | Dependencies                       |
 |:--------------|:--------|:------------------------------------------------------------------|:-----------------------------------|
-| tc_string.h   | 0.0.2   | String utility functions *(may be removed if merged)*             |                                    |
-| tc_terminal.h | 0.0.3   | System terminal (console) abstraction layer (colors, cursor, ...) |                                    |
-| tc_history.h  | 0.0.2   | Line history handling; independent of system terminal.            | tc_string                          |
-| tc_editline.h | 0.0.2   | Terminal line input with history handling.                        | tc_terminal tc_history / tc_string |
+| tc_string.h   | -.-.-   | String utility functions *(may be removed if merged)*             |                                    |
+| tc_terminal.h | -.-.-   | System terminal (console) abstraction layer (colors, cursor, ...) |                                    |
+| tc_history.h  | -.-.-   | Line history handling; independent of system terminal.            | tc_string                          |
+| tc_editline.h | -.-.-   | Terminal line input with history handling.                        | tc_terminal tc_history / tc_string |
 
 Target OSes are Windows, Linux, FreeBSD and Mac OS X. Note that I do not currently have access to OS X, so the code might be buggier than usual.
 
