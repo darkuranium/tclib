@@ -59,6 +59,7 @@ TC_String* tchist_exec(TC_History* hist);
 
 #ifdef TC_HISTORY_IMPLEMENTATION
 #undef TC_HISTORY_IMPLEMENTATION
+#include <stdlib.h>
 
 #ifndef TC__STATIC_CAST
 #ifdef __cplusplus
@@ -139,6 +140,7 @@ void tchist_deinit(TC_History* hist)
         tcstr_deinit(&hist->entries[i].orig);
         tcstr_deinit(&hist->entries[i].edit);
     }
+    free(hist->entries);
 }
 
 TC_String* tchist_get_string(TC_History* hist)
