@@ -8,6 +8,8 @@
  * URL: https://github.com/darkuranium/tclib
  *
  * VERSION HISTORY:
+ * 0.0.3    added TC_MALLOC, TC_MEMCPY and friends
+ *          added tcstr_utf8_find_offset()
  * 0.0.2    made the library compile with a C++ compiler
  * 0.0.1    initial public release
  *
