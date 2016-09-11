@@ -32,29 +32,29 @@ static int do_echo(TC_String* str, size_t hpos)
         tail = head + strcspn(str->ptr + head, " ");
 
         if(tail - head == 3 && !memcmp(str->ptr + head, "var", 3))
-            tcterm_set_attr(TCTERM_FG_CYAN);
+            tcterm_set_attr(TCTERM_FG_CYAN | TCTERM_BG_DEFAULT);
         else
         {
             ident = head + strspn(str->ptr + head, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_");
             if(ident - head)
             {
-                tcterm_set_attr(TCTERM_FG_RED);
+                tcterm_set_attr(TCTERM_FG_RED | TCTERM_BG_DEFAULT);
                 tcterm_print(str->ptr + head, ident - head);
                 head = ident;
             }
             ident = head + strspn(str->ptr + head, "012345678.");
             if(ident - head)
             {
-                tcterm_set_attr(TCTERM_FG_MAGENTA);
+                tcterm_set_attr(TCTERM_FG_MAGENTA | TCTERM_BG_DEFAULT);
                 tcterm_print(str->ptr + head, ident - head);
                 head = ident;
             }
-            tcterm_set_attr(TCTERM_FG_WHITE);
+            tcterm_set_attr_default();
         }
 
         tcterm_print(str->ptr + head, tail - head);
 
-        tcterm_set_attr(TCTERM_FG_WHITE);
+        tcterm_set_attr_default();
 
         head = tail + strspn(str->ptr + tail, " ");
         tcterm_print(str->ptr + tail, head - tail);

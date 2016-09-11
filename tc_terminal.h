@@ -2,7 +2,7 @@
  * tc_terminal.h: Operating system terminal abstraction layer.
  *
  * DEPENDS:
- * VERSION: 0.0.2 (2016-09-08)
+ * VERSION: 0.0.3 (2016-09-11)
  * LICENSE: CC0 & Boost (dual-licensed)
  * AUTHOR: Tim Cas
  * URL: https://github.com/darkuranium/tclib
@@ -37,8 +37,13 @@ extern "C" {
 #define TCTERM_BG_BLUE      0x40
 #define TCTERM_BG_INTENSE   0x80
 
-//#define TCTERM_FG_DEFAULT
-//#define TCTERM_BG_DEFAULT
+#define TCTERM_FG_DEFAULT   0x0100
+#define TCTERM_BG_DEFAULT   0x1000
+
+/*
+#define TCTERM_FG_STARTING
+#define TCTERM_BG_STARTING
+ */
 
 /* extras */
 #define TCTERM_FG_BLACK     0x00
@@ -295,23 +300,38 @@ int tcterm_set_attr(int attr)
 {
 #ifdef _WIN32
     WORD wattr = 0;
-    if(attr & TCTERM_FG_RED) wattr |= FOREGROUND_RED;
-    if(attr & TCTERM_FG_GREEN) wattr |= FOREGROUND_GREEN;
-    if(attr & TCTERM_FG_BLUE) wattr |= FOREGROUND_BLUE;
-    if(attr & TCTERM_FG_INTENSE) wattr |= FOREGROUND_INTENSITY;
-    if(attr & TCTERM_BG_RED) wattr |= BACKGROUND_RED;
-    if(attr & TCTERM_BG_GREEN) wattr |= BACKGROUND_GREEN;
-    if(attr & TCTERM_BG_BLUE) wattr |= BACKGROUND_BLUE;
-    if(attr & TCTERM_BG_INTENSE) wattr |= BACKGROUND_INTENSITY;
+    if(attr & TCTERM_FG_DEFAULT)
+        wattr |= tcterm__ctx.defattr & (FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE | FOREGROUND_INTENSITY);
+    else
+    {
+        if(attr & TCTERM_FG_RED) wattr |= FOREGROUND_RED;
+        if(attr & TCTERM_FG_GREEN) wattr |= FOREGROUND_GREEN;
+        if(attr & TCTERM_FG_BLUE) wattr |= FOREGROUND_BLUE;
+        if(attr & TCTERM_FG_INTENSE) wattr |= FOREGROUND_INTENSITY;
+    }
+    if(attr & TCTERM_BG_DEFAULT)
+        wattr |= tcterm__ctx.defattr & (BACKGROUND_RED | BACKGROUND_GREEN | BACKGROUND_BLUE | BACKGROUND_INTENSITY);
+    else
+    {
+        if(attr & TCTERM_BG_RED) wattr |= BACKGROUND_RED;
+        if(attr & TCTERM_BG_GREEN) wattr |= BACKGROUND_GREEN;
+        if(attr & TCTERM_BG_BLUE) wattr |= BACKGROUND_BLUE;
+        if(attr & TCTERM_BG_INTENSE) wattr |= BACKGROUND_INTENSITY;
+    }
     BOOL ok = 1;
     ok &= SetConsoleTextAttribute(tcterm__ctx.wh[TCTERM_STDOUT], wattr);
     ok &= SetConsoleTextAttribute(tcterm__ctx.wh[TCTERM_STDERR], wattr);
     return ok;
 #else /* POSIX */
     if(!tcterm__ctx.hascol) return 2;
-    return tcterm_printf("\033[0;%d;%dm",
-        (attr & TCTERM_FG_WHITE) + ((attr & TCTERM_FG_INTENSE) ? 90 : 30),
-        ((attr & TCTERM_BG_WHITE) >> 4) + ((attr & TCTERM_BG_INTENSE) ? 100 : 40)) > 0;
+    int ok = 1;
+    ok &= tcterm_print("\033[0") > 0;
+    if(!(attr & TCTERM_FG_DEFAULT))
+        ok &= tcterm_printf(";%d", (attr & TCTERM_FG_INTENSE) ? 90 : 30) > 0;
+    if(!(attr & TCTERM_BG_DEFAULT))
+        ok &= tcterm_printf(";%d", (attr & TCTERM_BG_INTENSE) ? 100 : 40) > 0;
+    ok &= tcterm_print("m");
+    return ok;
 #endif
 }
 int tcterm_set_attr_default(void)
