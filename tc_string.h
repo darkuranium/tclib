@@ -2,7 +2,7 @@
  * tc_string.h: TC_String implementation & handling.
  *
  * DEPENDS:
- * VERSION: 0.0.2 (2016-09-08)
+ * VERSION: 0.0.3 (2016-09-11)
  * LICENSE: CC0 & Boost (dual-licensed)
  * AUTHOR: Tim Cas
  * URL: https://github.com/darkuranium/tclib
@@ -118,8 +118,6 @@
  * DESCRIPTION:
  *  Find the byte offset to the start of a specific Unicode code point, or vice-versa.
  *
- *  ***Please note that `tcstr_utf8_find_offset` is currently unimplemented.***
- *
  *
  * SYNOPSIS:
  *  size_t tcstr_utf8_prev_off(const TC_String* str, size_t off);
@@ -158,7 +156,7 @@ TC_String* tcstr_splice(TC_String* str, size_t pos, size_t del, const TC_String*
 TC_String* tcstr_splices(TC_String* str, size_t pos, size_t del, const char* ptr, int len);
 
 /* unicode index -> string offset */
-/*size_t tcstr_utf8_find_offset(const TC_String* str, size_t chr);*/
+size_t tcstr_utf8_find_offset(const TC_String* str, size_t chr);
 /* string offset -> unicode index */
 size_t tcstr_utf8_find_char(const TC_String* str, size_t off);
 size_t tcstr_utf8_prev_off(const TC_String* str, size_t off);
@@ -304,18 +302,18 @@ static int tcstr__utf8_is_sync(char c)
     return !(uc & 0x80) || (uc & 0xC0) == 0xC0;
 }
 /* unicode index -> string offset */
-/*static size_t mhINT_utf8_find_offset(const MH_String* str, size_t uidx)
+size_t tcstr_utf8_find_offset(const TC_String* str, size_t uidx)
 {
     size_t i;
     for(i = 0; i < str->len; i++)
     {
         if(!uidx)
             break;
-        if(mhINT_utf8_is_sync(str->ptr[i]))
+        if(tcstr__utf8_is_sync(str->ptr[i]))
             uidx--;
     }
     return i;
-}*/
+}
 /* string offset -> unicode index */
 size_t tcstr_utf8_find_char(const TC_String* str, size_t off)
 {
