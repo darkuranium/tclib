@@ -1,5 +1,5 @@
 /*
- * tc_hash.h: Hash function library.
+ * tc_hash.h: Cryptographic hash function library.
  *
  * DEPENDS:
  * VERSION: 0.0.1 (2017-08-12)
