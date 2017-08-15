@@ -8,22 +8,26 @@
  * URL: https://github.com/darkuranium/tclib
  *
  * VERSION HISTORY:
- * 0.0.1    initial public release
+ * 0.0.2    added "FIPS 202" algorithms (SHA3-{224,256,384,512}, SHAKE{128,256})
+ * 0.0.1    initial public release (MD5, FIPS 180-4: SHA1 & SHA2-{224,256,384,512,512/224,512/256})
  *
  * TODOs:
  * - SHA-3
- * - Tiger hash
- * - CRC-* (not cryptographic, but useful)
+ * - Tiger/{128,160,192}, Tiger2/{128,160,192}
+ * - RIPEMD-{128,160,256,320}
+ * - optimizations
+ * - HMAC [FIPS 198-1]
+ * - CRC-* (not cryptographic, but useful; most likely as a separate `tc_checksum`, though)
  *
  *
  *
  * A library of byte-oriented cryptographic hash functions (some non-cryptographic ones are planned).
  *
  * A single file should contain the following `#define` before including the header:
- *  ```c
- *  #define TC_HASH_IMPLEMENTATION
- *  #include "tc_hash.h"
- *  ```
+ *
+ *      #define TC_HASH_IMPLEMENTATION
+ *      #include "tc_hash.h"
+ *
  */
 
 /* ========== API ==========
@@ -36,7 +40,6 @@
  *
  *      uint8_t digest[TCHASH_MD5_DIGEST_SIZE];
  *      tchash_md5(digest, data, length_in_bytes);
- *
  *
  * However, for large files that wouldn't fit in memory, the above example may
  * not be viable. In that case, use the streaming API:
@@ -54,9 +57,14 @@
  *      while(nbytes == sizeof(buffer));
  *      tchash_md5_get(&md5, digest);
  *
- * Note that there is no `tchash_md5_deinit()` function --- all the data lives
- * on the stack, and thus there is nothing to deinitialize. Copying the state
- * can thus be done simply by assigning structs: `md5copy = md5;`.
+ * There is no `tchash_md5_deinit()` function --- all the data lives on the
+ * stack, and thus there is nothing to deinitialize. Copying the state can thus
+ * be done simply by assigning structs: `TCHash_MD5 md5copy = md5;`.
+ *
+ * The SHAKE128 and SHAKE256 algorithms are an exception here, since they have
+ * variable-length digests. They take an additional parameter, the size of the
+ * digest, in the `get()` function. For this reason, there is also no equivalent
+ * `DIGEST_SIZE` constant;
  *
  *
  * Note that `tchash_md5_get(md5,digest)` does *not* modify the state of `md5`.
@@ -75,18 +83,31 @@
  *
  * The following algorithms are available:
  * - MD5 (not recommended)
- * - SHA1 (not recommended)
- * - SHA2:
+ * - SHA1 [FIPS 180-4] (not recommended)
+ * - SHA2 [FIPS 180-4]:
  *      - SHA2-256 (a.k.a SHA-256; 32-bit)
  *      - SHA2-512 (a.k.a SHA-512; 64-bit)
  *      - SHA2-224 (a.k.a SHA-224; variant of SHA2-256)
  *      - SHA2-384 (a.k.a SHA-384; variant of SHA2-512)
  *      - SHA2-512/224 (a.k.a SHA-512/224)
  *      - SHA2-512/256 (a.k.a SHA-512/256)
- *      - SHA2-512/t IV Generation Function (can be used to derive initial values
- *        for any `t` for SHA2-512/t)
- * For software that will mostly be compiled as 32-bit, SHA2-256 is recommended;
- * otherwise, SHA2-512 or SHA2-512/256 is recommended.
+ *      - SHA2-512/t IV Generation Function (can be used to derive initial
+ *        values for any `t` for SHA2-512/t)
+ * - SHA3 [FIPS 202]:
+ *      - SHA3-224
+ *      - SHA3-256
+ *      - SHA3-384
+ *      - SHA3-512
+ * - SHAKE [FIPS 202]:
+ *      - SHAKE128
+ *      - SHAKE256
+ * To help decide: avoid MD5 & SHA1 if at all possible (both have been broken;
+ * they are included because some file formats and protocols still depend on
+ * them, and because they still have *some* use as non-crypto-secure checksums).
+ * SHA2-512/256 is a good choice for performance (good performance on 64-bit,
+ * somewhat resistant against length extension attacks); for state-of-the-art
+ * security (at the cost of speed), use an algorithm in the SHA3 family (this
+ * includes the SHAKE{128,256} algorithms).
  *
  *
  * What follows is the API reference; again, using MD5 as an example.
@@ -246,6 +267,7 @@ int tchash_secure_eq(const void* a, const void* b, size_t len);
 size_t tchash_xstring_from_bytes(char* str, const void* data, size_t dlen);
 size_t tchash_bytes_from_xstring(void* data, const char* str, int slen);
 
+
 #define TCHASH_MD5_BLOCK_SIZE       64
 #define TCHASH_MD5_DIGEST_SIZE      16
 typedef struct TCHash_MD5
@@ -260,6 +282,7 @@ void tchash_md5_process(TCHash_MD5* md5, const void* data, size_t dlen);
 void* tchash_md5_get(TCHash_MD5* md5, void* digest);
 void* tchash_md5(void* digest, const void* data, size_t dlen);
 
+
 #define TCHASH_SHA1_BLOCK_SIZE      64
 #define TCHASH_SHA1_DIGEST_SIZE     20
 typedef struct TCHash_SHA1
@@ -273,6 +296,7 @@ TCHash_SHA1* tchash_sha1_init(TCHash_SHA1* sha1);
 void tchash_sha1_process(TCHash_SHA1* sha1, const void* data, size_t dlen);
 void* tchash_sha1_get(TCHash_SHA1* sha1, void* digest);
 void* tchash_sha1(void* digest, const void* data, size_t dlen);
+
 
 #define TCHASH_SHA2_256_BLOCK_SIZE  64
 #define TCHASH_SHA2_256_DIGEST_SIZE 32
@@ -348,16 +372,97 @@ void tchash_sha2_512_256_process(TCHash_SHA2_512_256* sha2_512_256, const void* 
 void* tchash_sha2_512_256_get(TCHash_SHA2_512_256* sha2_512_256, void* digest);
 void* tchash_sha2_512_256(void* digest, const void* data, size_t dlen);
 
-typedef struct TCHash_SHA3
+
+#define TCHASH_SHA3_224_BLOCK_SIZE  ((1600-2*224)/8)
+#define TCHASH_SHA3_224_DIGEST_SIZE (224/8)
+typedef struct TCHash_SHA3_224
 {
-    uint64_t h[5][5];
-} TCHash_SHA3;
+    /*uint64_t total;*/
+    uint64_t h[25];
+    union { uint64_t M[TCHASH_SHA3_224_BLOCK_SIZE / sizeof(uint64_t)]; unsigned char b[TCHASH_SHA3_224_BLOCK_SIZE]; } buf;
+    unsigned char blen;
+} TCHash_SHA3_224;
+TCHash_SHA3_224* tchash_sha3_224_init(TCHash_SHA3_224* sha3_224);
+void tchash_sha3_224_process(TCHash_SHA3_224* sha3_224, const void* data, size_t dlen);
+void* tchash_sha3_224_get(TCHash_SHA3_224* sha3_224, void* digest);
+void* tchash_sha3_224(void* digest, const void* data, size_t dlen);
+
+#define TCHASH_SHA3_256_BLOCK_SIZE  ((1600-2*256)/8)
+#define TCHASH_SHA3_256_DIGEST_SIZE (256/8)
+typedef struct TCHash_SHA3_256
+{
+    /*uint64_t total;*/
+    uint64_t h[25];
+    union { uint64_t M[TCHASH_SHA3_256_BLOCK_SIZE / sizeof(uint64_t)]; unsigned char b[TCHASH_SHA3_256_BLOCK_SIZE]; } buf;
+    unsigned char blen;
+} TCHash_SHA3_256;
+TCHash_SHA3_256* tchash_sha3_256_init(TCHash_SHA3_256* sha3_256);
+void tchash_sha3_256_process(TCHash_SHA3_256* sha3_256, const void* data, size_t dlen);
+void* tchash_sha3_256_get(TCHash_SHA3_256* sha3_256, void* digest);
+void* tchash_sha3_256(void* digest, const void* data, size_t dlen);
+
+#define TCHASH_SHA3_384_BLOCK_SIZE  ((1600-2*384)/8)
+#define TCHASH_SHA3_384_DIGEST_SIZE (384/8)
+typedef struct TCHash_SHA3_384
+{
+    /*uint64_t total;*/
+    uint64_t h[25];
+    union { uint64_t M[TCHASH_SHA3_384_BLOCK_SIZE / sizeof(uint64_t)]; unsigned char b[TCHASH_SHA3_384_BLOCK_SIZE]; } buf;
+    unsigned char blen;
+} TCHash_SHA3_384;
+TCHash_SHA3_384* tchash_sha3_384_init(TCHash_SHA3_384* sha3_384);
+void tchash_sha3_384_process(TCHash_SHA3_384* sha3_384, const void* data, size_t dlen);
+void* tchash_sha3_384_get(TCHash_SHA3_384* sha3_384, void* digest);
+void* tchash_sha3_384(void* digest, const void* data, size_t dlen);
+
+#define TCHASH_SHA3_512_BLOCK_SIZE  ((1600-2*512)/8)
+#define TCHASH_SHA3_512_DIGEST_SIZE (512/8)
+typedef struct TCHash_SHA3_512
+{
+    /*uint64_t total;*/
+    uint64_t h[25];
+    union { uint64_t M[TCHASH_SHA3_512_BLOCK_SIZE / sizeof(uint64_t)]; unsigned char b[TCHASH_SHA3_512_BLOCK_SIZE]; } buf;
+    unsigned char blen;
+} TCHash_SHA3_512;
+TCHash_SHA3_512* tchash_sha3_512_init(TCHash_SHA3_512* sha3_512);
+void tchash_sha3_512_process(TCHash_SHA3_512* sha3_512, const void* data, size_t dlen);
+void* tchash_sha3_512_get(TCHash_SHA3_512* sha3_512, void* digest);
+void* tchash_sha3_512(void* digest, const void* data, size_t dlen);
+
+
+#define TCHASH_SHAKE128_BLOCK_SIZE  ((1600-2*128)/8)
+typedef struct TCHash_SHAKE128
+{
+    /*uint64_t total;*/
+    uint64_t h[25];
+    union { uint64_t M[TCHASH_SHAKE128_BLOCK_SIZE / sizeof(uint64_t)]; unsigned char b[TCHASH_SHAKE128_BLOCK_SIZE]; } buf;
+    unsigned char blen;
+} TCHash_SHAKE128;
+TCHash_SHAKE128* tchash_shake128_init(TCHash_SHAKE128* shake128);
+void tchash_shake128_process(TCHash_SHAKE128* shake128, const void* data, size_t dlen);
+void* tchash_shake128_get(TCHash_SHAKE128* shake128, void* digest, size_t digestlen);
+void* tchash_shake128(void* digest, size_t digestlen, const void* data, size_t dlen);
+
+#define TCHASH_SHAKE256_BLOCK_SIZE  ((1600-2*256)/8)
+typedef struct TCHash_SHAKE256
+{
+    /*uint64_t total;*/
+    uint64_t h[25];
+    union { uint64_t M[TCHASH_SHAKE256_BLOCK_SIZE / sizeof(uint64_t)]; unsigned char b[TCHASH_SHAKE256_BLOCK_SIZE]; } buf;
+    unsigned char blen;
+} TCHash_SHAKE256;
+TCHash_SHAKE256* tchash_shake256_init(TCHash_SHAKE256* shake256);
+void tchash_shake256_process(TCHash_SHAKE256* shake256, const void* data, size_t dlen);
+void* tchash_shake256_get(TCHash_SHAKE256* shake256, void* digest, size_t digestlen);
+void* tchash_shake256(void* digest, size_t digestlen, const void* data, size_t dlen);
 
 #ifdef __cplusplus
 }
 #endif
 
 #endif /* TC_HASH_H_ */
+
+
 
 #ifdef TC_HASH_IMPLEMENTATION
 #undef TC_HASH_IMPLEMENTATION
@@ -397,42 +502,51 @@ static uint64_t tchash_i_swap64(uint64_t x)
 }
 
 #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
-#define TCHASH_I_FROM_LE32(x)   (x)
-#define TCHASH_I_FROM_LE64(x)   (x)
+#define TCHASH_I_FROM_LE16(x)   ((uint16_t)(x))
+#define TCHASH_I_FROM_LE32(x)   ((uint32_t)(x))
+#define TCHASH_I_FROM_LE64(x)   ((uint64_t)(x))
+#define TCHASH_I_FROM_BE16(x)   tchash_i_swap16(x)
 #define TCHASH_I_FROM_BE32(x)   tchash_i_swap32(x)
 #define TCHASH_I_FROM_BE64(x)   tchash_i_swap64(x)
-#define TCHASH_I_TO_LE32(x)     (x)
-#define TCHASH_I_TO_LE64(x)     (x)
+#define TCHASH_I_TO_LE16(x)     ((uint16_t)(x))
+#define TCHASH_I_TO_LE32(x)     ((uint32_t)(x))
+#define TCHASH_I_TO_LE64(x)     ((uint64_t)(x))
+#define TCHASH_I_TO_BE16(x)     tchash_i_swap16(x)
 #define TCHASH_I_TO_BE32(x)     tchash_i_swap32(x)
 #define TCHASH_I_TO_BE64(x)     tchash_i_swap64(x)
 static void tchash_i_from_le32arr(uint32_t* x, size_t len) {}
 static void tchash_i_from_be32arr(uint32_t* x, size_t len) { while(len--) x[len] = TCHASH_I_FROM_BE32(x[len]); }
 static void tchash_i_to_le32arr(uint32_t* x, size_t len) {}
 static void tchash_i_to_be32arr(uint32_t* x, size_t len) { while(len--) x[len] = TCHASH_I_TO_BE32(x[len]); }
-//static void tchash_i_from_le64arr(uint64_t* x, size_t len) {}
+static void tchash_i_from_le64arr(uint64_t* x, size_t len) {}
 static void tchash_i_from_be64arr(uint64_t* x, size_t len) { while(len--) x[len] = TCHASH_I_FROM_BE64(x[len]); }
-//static void tchash_i_to_le64arr(uint64_t* x, size_t len) {}
+static void tchash_i_to_le64arr(uint64_t* x, size_t len) {}
 static void tchash_i_to_be64arr(uint64_t* x, size_t len) { while(len--) x[len] = TCHASH_I_TO_BE64(x[len]); }
 #elif __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+#define TCHASH_I_FROM_LE16(x)   tchash_i_swap16(x)
 #define TCHASH_I_FROM_LE32(x)   tchash_i_swap32(x)
 #define TCHASH_I_FROM_LE64(x)   tchash_i_swap64(x)
-#define TCHASH_I_FROM_BE32(x)   (x)
-#define TCHASH_I_FROM_BE64(x)   (x)
-#define TCHASH_I_TO_LE32(x) tchash_i_swap32(x)
-#define TCHASH_I_TO_LE64(x) tchash_i_swap64(x)
-#define TCHASH_I_TO_BE32(x) (x)
-#define TCHASH_I_TO_BE64(x) (x)
+#define TCHASH_I_FROM_BE16(x)   ((uint16_t)(x))
+#define TCHASH_I_FROM_BE32(x)   ((uint32_t)(x))
+#define TCHASH_I_FROM_BE64(x)   ((uint64_t)(x))
+#define TCHASH_I_TO_LE16(x)     tchash_i_swap16(x)
+#define TCHASH_I_TO_LE32(x)     tchash_i_swap32(x)
+#define TCHASH_I_TO_LE64(x)     tchash_i_swap64(x)
+#define TCHASH_I_TO_BE16(x)     ((uint16_t)(x))
+#define TCHASH_I_TO_BE32(x)     ((uint32_t)(x))
+#define TCHASH_I_TO_BE64(x)     ((uint64_t)(x))
 static void tchash_i_from_le32arr(uint32_t* x, size_t len) { while(len--) x[len] = TCHASH_I_FROM_LE32(x[len]); }
 static void tchash_i_from_be32arr(uint32_t* x, size_t len) {}
 static void tchash_i_to_le32arr(uint32_t* x, size_t len) { while(len--) x[len] = TCHASH_I_TO_LE32(x[len]); }
 static void tchash_i_to_be32arr(uint32_t* x, size_t len) {}
-//static void tchash_i_from_le64arr(uint64_t* x, size_t len) { while(len--) x[len] = TCHASH_I_FROM_LE64(x[len]); }
+static void tchash_i_from_le64arr(uint64_t* x, size_t len) { while(len--) x[len] = TCHASH_I_FROM_LE64(x[len]); }
 static void tchash_i_from_be64arr(uint64_t* x, size_t len) {}
-//static void tchash_i_to_le64arr(uint64_t* x, size_t len) { while(len--) x[len] = TCHASH_I_TO_LE64(x[len]); }
+static void tchash_i_to_le64arr(uint64_t* x, size_t len) { while(len--) x[len] = TCHASH_I_TO_LE64(x[len]); }
 static void tchash_i_to_be64arr(uint64_t* x, size_t len) {}
 #else
 #error "Unknown byte order"
 #endif
+static void tchash_i_to_le64arr_cpy(uint64_t* d, const uint64_t* x, size_t len) { while(len--) *d++ = TCHASH_I_FROM_LE64(*x++); }
 
 #define TCHASH_I_U32_FROM_BYTES_LE(a,b,c,d)    ((uint32_t)(a) | ((uint32_t)(b) << 8) | ((uint32_t)(c) << 16) | ((uint32_t)(d) << 24))
 #define TCHASH_I_U32_FROM_BYTES_BE(a,b,c,d)    TCHASH_I_U32_FROM_BYTES_LE(d,c,b,a)
@@ -446,18 +560,22 @@ static void tchash_i_to_be64arr(uint64_t* x, size_t len) {}
 
 static uint32_t tchash_i_rotl32(uint32_t x, int k)
 {
+    k &= 31;
     return (x << k) | (x >> (32-k));
 }
 static uint32_t tchash_i_rotr32(uint32_t x, int k)
 {
+    k &= 31;
     return (x >> k) | (x << (32-k));
 }
-/*static uint64_t tchash_i_rotl64(uint64_t x, int k)
+static uint64_t tchash_i_rotl64(uint64_t x, int k)
 {
+    k &= 63;
     return (x << k) | (x >> (64-k));
-}*/
+}
 static uint64_t tchash_i_rotr64(uint64_t x, int k)
 {
+    k &= 63;
     return (x >> k) | (x << (64-k));
 }
 
@@ -668,7 +786,9 @@ void* tchash_md5_get(TCHash_MD5* md5, void* digest)
 {
     TCHASH_I_GET_BODY_(md5,MD5,le,32,{M[14] = md5->total << 3; M[15] = md5->total >> 29;},sizeof(h)/sizeof(*h),sizeof(h));
 }
-void* tchash_md5(void* digest, const void* data, size_t dlen) { TCHASH_I_SIMPLE_BODY_(md5,MD5); }
+void* tchash_md5(void* digest, const void* data, size_t dlen) { TCHASH_I_SIMPLE_BODY_(md5,MD5) }
+
+
 
 TCHash_SHA1* tchash_sha1_init(TCHash_SHA1* sha1)
 {
@@ -681,7 +801,7 @@ TCHash_SHA1* tchash_sha1_init(TCHash_SHA1* sha1)
 
     return sha1;
 }
-void tchash_i_sha1_process_block(uint32_t h[5], const uint32_t M[16])
+static void tchash_i_sha1_process_block(uint32_t h[5], const uint32_t M[16])
 {
     uint32_t w[80];
     memcpy(w, M, 16 * sizeof(*M));
@@ -741,7 +861,9 @@ void* tchash_sha1_get(TCHash_SHA1* sha1, void* digest)
 {
     TCHASH_I_GET_BODY_(sha1,SHA1,be,32,{M[14] = sha1->total >> 29; M[15] = sha1->total << 3;},sizeof(h)/sizeof(*h),sizeof(h))
 }
-void* tchash_sha1(void* digest, const void* data, size_t dlen) { TCHASH_I_SIMPLE_BODY_(sha1,SHA1); }
+void* tchash_sha1(void* digest, const void* data, size_t dlen) { TCHASH_I_SIMPLE_BODY_(sha1,SHA1) }
+
+
 
 TCHash_SHA2_256* tchash_sha2_256_init(TCHash_SHA2_256* sha2)
 {
@@ -754,7 +876,7 @@ TCHash_SHA2_256* tchash_sha2_256_init(TCHash_SHA2_256* sha2)
 
     return sha2;
 }
-void tchash_i_sha2_256_process_block(uint32_t H[8], const uint32_t M[16])
+static void tchash_i_sha2_256_process_block(uint32_t H[8], const uint32_t M[16])
 {
     static const uint32_t k[] = {
         UINT32_C(0x428a2f98), UINT32_C(0x71374491), UINT32_C(0xb5c0fbcf), UINT32_C(0xe9b5dba5), UINT32_C(0x3956c25b), UINT32_C(0x59f111f1), UINT32_C(0x923f82a4), UINT32_C(0xab1c5ed5),
@@ -816,7 +938,7 @@ void* tchash_sha2_256_get(TCHash_SHA2_256* sha2_256, void* digest)
 {
     TCHASH_I_GET_BODY_(sha2_256,SHA2_256,be,32,{M[14] = sha2_256->total >> 29; M[15] = sha2_256->total << 3;},sizeof(h)/sizeof(*h),sizeof(h))
 }
-void* tchash_sha2_256(void* digest, const void* data, size_t dlen) { TCHASH_I_SIMPLE_BODY_(sha2_256,SHA2_256); }
+void* tchash_sha2_256(void* digest, const void* data, size_t dlen) { TCHASH_I_SIMPLE_BODY_(sha2_256,SHA2_256) }
 
 TCHash_SHA2_512* tchash_sha2_512_init(TCHash_SHA2_512* sha2)
 {
@@ -831,7 +953,7 @@ TCHash_SHA2_512* tchash_sha2_512_init(TCHash_SHA2_512* sha2)
 
     return sha2;
 }
-void tchash_i_sha2_512_process_block(uint64_t H[8], const uint64_t M[16])
+static void tchash_i_sha2_512_process_block(uint64_t H[8], const uint64_t M[16])
 {
     static const uint64_t k[] = {
         UINT64_C(0x428a2f98d728ae22), UINT64_C(0x7137449123ef65cd), UINT64_C(0xb5c0fbcfec4d3b2f), UINT64_C(0xe9b5dba58189dbbc), UINT64_C(0x3956c25bf348b538),
@@ -901,7 +1023,7 @@ void* tchash_sha2_512_get(TCHash_SHA2_512* sha2_512, void* digest)
 {
     TCHASH_I_GET_BODY_(sha2_512,SHA2_512,be,64,{M[14] = (sha2_512->total.lh[1] << 3) | (sha2_512->total.lh[0] >> (64-3)); M[15] = sha2_512->total.lh[0] << 3;},sizeof(h)/sizeof(*h),sizeof(h))
 }
-void* tchash_sha2_512(void* digest, const void* data, size_t dlen) { TCHASH_I_SIMPLE_BODY_(sha2_512,SHA2_512); }
+void* tchash_sha2_512(void* digest, const void* data, size_t dlen) { TCHASH_I_SIMPLE_BODY_(sha2_512,SHA2_512) }
 
 TCHash_SHA2_512* tchash_sha2_512_init_ivgen(TCHash_SHA2_512* sha2)
 {
@@ -932,7 +1054,7 @@ void* tchash_sha2_224_get(TCHash_SHA2_224* sha2_224, void* digest)
     TCHash_SHA2_256* sha2_256 = &sha2_224->sha2_256;
     TCHASH_I_GET_BODY_(sha2_256,SHA2_256,be,32,{M[14] = sha2_256->total >> 29; M[15] = sha2_256->total << 3;},sizeof(h)/sizeof(*h) - 1,TCHASH_SHA2_224_DIGEST_SIZE)
 }
-void* tchash_sha2_224(void* digest, const void* data, size_t dlen) { TCHASH_I_SIMPLE_BODY_(sha2_224,SHA2_224); }
+void* tchash_sha2_224(void* digest, const void* data, size_t dlen) { TCHASH_I_SIMPLE_BODY_(sha2_224,SHA2_224) }
 
 TCHash_SHA2_384* tchash_sha2_384_init(TCHash_SHA2_384* sha2)
 {
@@ -956,7 +1078,7 @@ void* tchash_sha2_384_get(TCHash_SHA2_384* sha2_384, void* digest)
     TCHash_SHA2_512* sha2_512 = &sha2_384->sha2_512;
     TCHASH_I_GET_BODY_(sha2_512,SHA2_512,be,64,{M[14] = (sha2_512->total.lh[1] << 3) | (sha2_512->total.lh[0] >> (64-3)); M[15] = sha2_512->total.lh[0] << 3;},sizeof(h)/sizeof(*h) - 2,TCHASH_SHA2_384_DIGEST_SIZE)
 }
-void* tchash_sha2_384(void* digest, const void* data, size_t dlen) { TCHASH_I_SIMPLE_BODY_(sha2_384,SHA2_384); }
+void* tchash_sha2_384(void* digest, const void* data, size_t dlen) { TCHASH_I_SIMPLE_BODY_(sha2_384,SHA2_384) }
 
 TCHash_SHA2_512* tchash_sha2_512_224_init(TCHash_SHA2_512* sha2)
 {
@@ -979,7 +1101,7 @@ void* tchash_sha2_512_224_get(TCHash_SHA2_512* sha2_512, void* digest)
 {
     TCHASH_I_GET_BODY_(sha2_512,SHA2_512,be,64,{M[14] = (sha2_512->total.lh[1] << 3) | (sha2_512->total.lh[0] >> (64-3)); M[15] = sha2_512->total.lh[0] << 3;},sizeof(h)/sizeof(*h) - 4,TCHASH_SHA2_512_224_DIGEST_SIZE)
 }
-void* tchash_sha2_512_224(void* digest, const void* data, size_t dlen) { TCHASH_I_SIMPLE_BODY_(sha2_512_224,SHA2_512_224); }
+void* tchash_sha2_512_224(void* digest, const void* data, size_t dlen) { TCHASH_I_SIMPLE_BODY_(sha2_512_224,SHA2_512_224) }
 
 TCHash_SHA2_512* tchash_sha2_512_256_init(TCHash_SHA2_512* sha2)
 {
@@ -1002,6 +1124,296 @@ void* tchash_sha2_512_256_get(TCHash_SHA2_512* sha2_512, void* digest)
 {
     TCHASH_I_GET_BODY_(sha2_512,SHA2_512,be,64,{M[14] = (sha2_512->total.lh[1] << 3) | (sha2_512->total.lh[0] >> (64-3)); M[15] = sha2_512->total.lh[0] << 3;},sizeof(h)/sizeof(*h) - 4,TCHASH_SHA2_512_256_DIGEST_SIZE)
 }
-void* tchash_sha2_512_256(void* digest, const void* data, size_t dlen) { TCHASH_I_SIMPLE_BODY_(sha2_512_256,SHA2_512_256); }
+void* tchash_sha2_512_256(void* digest, const void* data, size_t dlen) { TCHASH_I_SIMPLE_BODY_(sha2_512_256,SHA2_512_256) }
+
+
+
+#define TCHASH_I_KECCAK1600_L   6
+/* was used to compute the tables */
+/* 5: rc(t)     */
+/*static unsigned char tchash_i_keccak_p1600_rc_bit(int t)
+{
+    t %= 255;
+    unsigned char R = 1;
+    int i;
+    for(i = 0; i < t; i++)
+    {
+        unsigned char b = R >> 7;
+        R <<= 1;
+        R ^= b | (b << 4) | (b << 5) | (b << 6);
+    }
+    return R & 1;
+}
+static uint64_t tchash_i_keccak_p1600_rc(int ir, int l)
+{
+    uint64_t RC = 0;
+    int j;
+    for(j = 0; j <= l; j++)
+        RC |= (uint64_t)tchash_i_keccak_p1600_rc_bit(j + 7 * ir) << ((1 << j) - 1);
+    return RC;
+}*/
+#define A_(A,x,y)  (A)[(y)*5+(x)]
+// http://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.202.pdf
+static void tchash_i_keccak_p1600(uint64_t A[25], int nrounds)
+{
+    static const uint64_t RC[12 + 2 * TCHASH_I_KECCAK1600_L] = {
+        UINT64_C(0x0000000000000001),UINT64_C(0x0000000000008082),UINT64_C(0x800000000000808A),UINT64_C(0x8000000080008000),
+        UINT64_C(0x000000000000808B),UINT64_C(0x0000000080000001),UINT64_C(0x8000000080008081),UINT64_C(0x8000000000008009),
+        UINT64_C(0x000000000000008A),UINT64_C(0x0000000000000088),UINT64_C(0x0000000080008009),UINT64_C(0x000000008000000A),
+        UINT64_C(0x000000008000808B),UINT64_C(0x800000000000008B),UINT64_C(0x8000000000008089),UINT64_C(0x8000000000008003),
+        UINT64_C(0x8000000000008002),UINT64_C(0x8000000000000080),UINT64_C(0x000000000000800A),UINT64_C(0x800000008000000A),
+        UINT64_C(0x8000000080008081),UINT64_C(0x8000000000008080),UINT64_C(0x0000000080000001),UINT64_C(0x8000000080008008),
+    };
+    if(nrounds < 0) nrounds = 12 + 2 * TCHASH_I_KECCAK1600_L;
+
+    uint64_t C[5];
+    uint64_t tmpA[25];
+    uint64_t* newA[2];
+    int curA = 0;
+
+    newA[!curA] = A;
+    newA[curA] = tmpA;
+
+    int ir;
+    for(ir = 12 + 2 * TCHASH_I_KECCAK1600_L - nrounds; ir < 12 + 2 * TCHASH_I_KECCAK1600_L; ir++)
+    {
+        int x, y, t;
+
+        /* 1: theta(A)  */
+        for(x = 0; x < 5; x++)
+            C[x] = A_(newA[!curA],x,0) ^ A_(newA[!curA],x,1) ^ A_(newA[!curA],x,2) ^ A_(newA[!curA],x,3) ^ A_(newA[!curA],x,4);
+        for(x = 0; x < 5; x++)
+        {
+            uint64_t Dx = C[(x+5-1)%5] ^ tchash_i_rotl64(C[(x+1)%5], 1);
+            for(y = 0; y < 5; y++)
+                A_(newA[curA],x,y) = A_(newA[!curA],x,y) ^ Dx;
+        }
+        curA = !curA;
+
+        /* 2: rho(A)    */
+        newA[curA][0] = newA[!curA][0];
+        x = 1; y = 0;
+        for(t = 0; t < 24; t++)
+        {
+            A_(newA[curA],x,y) = tchash_i_rotl64(A_(newA[!curA],x,y), (t+1)*(t+2)/2);
+            int nx = y;
+            y = (2*x+3*y) % 5;
+            x = nx;
+        }
+        curA = !curA;
+
+        /* 3: pi(A)     */
+        for(x = 0; x < 5; x++)
+            for(y = 0; y < 5; y++)
+                //A_(newA[curA],(2*y+3*x)%5,x) = A_(newA[!curA],x,y);//WP
+                A_(newA[curA],x,y) = A_(newA[!curA],(x+3*y)%5,x);
+        curA = !curA;
+
+        /* 4: chi(A)    */
+        for(x = 0; x < 5; x++)
+            for(y = 0; y < 5; y++)
+                A_(newA[curA],x,y) = A_(newA[!curA],x,y) ^ (~A_(newA[!curA],(x+1)%5,y) & A_(newA[!curA],(x+2)%5,y));
+        curA = !curA;
+
+        /* 6: iota(a,ri)*/
+        newA[!curA][0] ^= RC[ir];
+        /* do *not* flip curA here */
+    }
+    if(newA[!curA] != A)
+        memcpy(A, newA[!curA], sizeof(tmpA));
+}
+#undef A_
+static void tchash_i_keccak1600_process_block(uint64_t h[25], uint64_t* M, size_t bsize, int nrounds)
+{
+    size_t i;
+    for(i = 0; i < bsize / sizeof(*M); i++)
+        h[i] ^= M[i];
+    tchash_i_keccak_p1600(h, nrounds);
+}
+
+#define TCHASH_I_GETKECCAK_BODY_(LHASH,UHASH,DIGESTSIZE,PADBITS,NPADBITS)      \
+    TCHash_##UHASH sha3 = *LHASH;                                              \
+                                                                               \
+    unsigned char i = sha3.blen;                                               \
+    /* S=(01); P=(1 0* 1) */                                                   \
+    sha3.buf.b[i++] = (PADBITS) | (1 << (NPADBITS)); /* (?) (1 0* ... */       \
+    memset(&sha3.buf.b[i], 0x00, sizeof(sha3.buf.b) - i);                      \
+    sha3.buf.b[sizeof(sha3.buf.b) - 1] |= 0x80; /* ... 1) */                   \
+                                                                               \
+    tchash_i_from_le64arr(sha3.buf.M, sizeof(sha3.buf.M) / sizeof(*sha3.buf.M));\
+    tchash_i_##LHASH##_process_block(sha3.h, sha3.buf.M);                      \
+                                                                               \
+    tchash_i_to_le64arr(sha3.h, (DIGESTSIZE + (sizeof(*sha3.h) - 1)) / sizeof(*sha3.h));\
+    memcpy(digest, sha3.h, DIGESTSIZE);                                        \
+    return digest;
+#define TCHASH_I_GETKECCAK_BODY_VARYING_(LHASH,UHASH,DIGESTSIZE,PADBITS,NPADBITS)\
+    TCHash_##UHASH sha3 = *LHASH;                                              \
+    uint64_t outh[sizeof(sha3.h) / sizeof(*sha3.h)];                           \
+                                                                               \
+    unsigned char i = sha3.blen;                                               \
+    /* S=(01); P=(1 0* 1) */                                                   \
+    sha3.buf.b[i++] = (PADBITS) | (1 << (NPADBITS)); /* (?) (1 0* ... */       \
+    memset(&sha3.buf.b[i], 0x00, sizeof(sha3.buf.b) - i);                      \
+    sha3.buf.b[sizeof(sha3.buf.b) - 1] |= 0x80; /* ... 1) */                   \
+                                                                               \
+    tchash_i_from_le64arr(sha3.buf.M, sizeof(sha3.buf.M) / sizeof(*sha3.buf.M));\
+    tchash_i_##LHASH##_process_block(sha3.h, sha3.buf.M);                      \
+                                                                               \
+    size_t remaining = (DIGESTSIZE);                                           \
+    char* cdigest = digest;                                                    \
+    for(;;)                                                                    \
+    {                                                                          \
+        size_t clen = remaining < sizeof(sha3.buf.b) ? remaining : sizeof(sha3.buf.b);\
+        tchash_i_to_le64arr_cpy(outh, sha3.h, (clen + (sizeof(*sha3.h) - 1)) / sizeof(*sha3.h));\
+        memcpy(cdigest, outh, clen);                                           \
+        cdigest += clen;                                                       \
+        remaining -= clen;                                                     \
+        if(!remaining) break;                                                  \
+        tchash_i_keccak_p1600(sha3.h, -1);                                     \
+    }                                                                          \
+    return digest;
+#define TCHASH_I_GETKECCAK_BODY_SHA3_(LHASH,UHASH)   TCHASH_I_GETKECCAK_BODY_(LHASH,UHASH,TCHASH_##UHASH##_DIGEST_SIZE,0x02,2)
+#define TCHASH_I_GETKECCAK_BODY_RAWSHAKE_(LHASH,UHASH,DIGESTSIZE,PADBITS,NPADBITS)  TCHASH_I_GETKECCAK_BODY_VARYING_(LHASH,UHASH,DIGESTSIZE,0x03 | ((PADBITS) << (NPADBITS)),2 + (NPADBITS))
+#define TCHASH_I_GETKECCAK_BODY_SHAKE_(LHASH,UHASH,DIGESTSIZE)  TCHASH_I_GETKECCAK_BODY_RAWSHAKE_(LHASH,UHASH,DIGESTSIZE,0x03,2)
+
+TCHash_SHA3_224* tchash_sha3_224_init(TCHash_SHA3_224* sha3_224)
+{
+    if(!sha3_224) return NULL;
+
+    /*sha3_224->total = 0;*/
+    memset(sha3_224->h, 0, sizeof(sha3_224->h));
+    sha3_224->blen = 0;
+
+    return sha3_224;
+}
+static void tchash_i_sha3_224_process_block(uint64_t h[25], uint64_t M[9]) { tchash_i_keccak1600_process_block(h, M, TCHASH_SHA3_224_BLOCK_SIZE, -1); }
+void tchash_sha3_224_process(TCHash_SHA3_224* sha3_224, const void* data, size_t dlen)
+{
+    TCHASH_I_PROCESS_BODY_(sha3_224,SHA3_224,le,64,/*{sha3_224->total+=dlen;}*/)
+}
+void* tchash_sha3_224_get(TCHash_SHA3_224* sha3_224, void* digest)
+{
+    TCHASH_I_GETKECCAK_BODY_SHA3_(sha3_224,SHA3_224)
+}
+void* tchash_sha3_224(void* digest, const void* data, size_t dlen) { TCHASH_I_SIMPLE_BODY_(sha3_224,SHA3_224) }
+
+TCHash_SHA3_256* tchash_sha3_256_init(TCHash_SHA3_256* sha3_256)
+{
+    if(!sha3_256) return NULL;
+
+    /*sha3_256->total = 0;*/
+    memset(sha3_256->h, 0, sizeof(sha3_256->h));
+    sha3_256->blen = 0;
+
+    return sha3_256;
+}
+static void tchash_i_sha3_256_process_block(uint64_t h[25], uint64_t M[9]) { tchash_i_keccak1600_process_block(h, M, TCHASH_SHA3_256_BLOCK_SIZE, -1); }
+void tchash_sha3_256_process(TCHash_SHA3_256* sha3_256, const void* data, size_t dlen)
+{
+    TCHASH_I_PROCESS_BODY_(sha3_256,SHA3_256,le,64,/*{sha3_256->total+=dlen;}*/)
+}
+void* tchash_sha3_256_get(TCHash_SHA3_256* sha3_256, void* digest)
+{
+    TCHASH_I_GETKECCAK_BODY_SHA3_(sha3_256,SHA3_256)
+}
+void* tchash_sha3_256(void* digest, const void* data, size_t dlen) { TCHASH_I_SIMPLE_BODY_(sha3_256,SHA3_256) }
+
+TCHash_SHA3_384* tchash_sha3_384_init(TCHash_SHA3_384* sha3_384)
+{
+    if(!sha3_384) return NULL;
+
+    /*sha3_384->total = 0;*/
+    memset(sha3_384->h, 0, sizeof(sha3_384->h));
+    sha3_384->blen = 0;
+
+    return sha3_384;
+}
+static void tchash_i_sha3_384_process_block(uint64_t h[25], uint64_t M[9]) { tchash_i_keccak1600_process_block(h, M, TCHASH_SHA3_384_BLOCK_SIZE, -1); }
+void tchash_sha3_384_process(TCHash_SHA3_384* sha3_384, const void* data, size_t dlen)
+{
+    TCHASH_I_PROCESS_BODY_(sha3_384,SHA3_384,le,64,/*{sha3_384->total+=dlen;}*/)
+}
+void* tchash_sha3_384_get(TCHash_SHA3_384* sha3_384, void* digest)
+{
+    TCHASH_I_GETKECCAK_BODY_SHA3_(sha3_384,SHA3_384)
+}
+void* tchash_sha3_384(void* digest, const void* data, size_t dlen) { TCHASH_I_SIMPLE_BODY_(sha3_384,SHA3_384) }
+
+TCHash_SHA3_512* tchash_sha3_512_init(TCHash_SHA3_512* sha3_512)
+{
+    if(!sha3_512) return NULL;
+
+    /*sha3_512->total = 0;*/
+    memset(sha3_512->h, 0, sizeof(sha3_512->h));
+    sha3_512->blen = 0;
+
+    return sha3_512;
+}
+static void tchash_i_sha3_512_process_block(uint64_t h[25], uint64_t M[9]) { tchash_i_keccak1600_process_block(h, M, TCHASH_SHA3_512_BLOCK_SIZE, -1); }
+void tchash_sha3_512_process(TCHash_SHA3_512* sha3_512, const void* data, size_t dlen)
+{
+    TCHASH_I_PROCESS_BODY_(sha3_512,SHA3_512,le,64,/*{sha3_512->total+=dlen;}*/)
+}
+void* tchash_sha3_512_get(TCHash_SHA3_512* sha3_512, void* digest)
+{
+    TCHASH_I_GETKECCAK_BODY_SHA3_(sha3_512,SHA3_512)
+}
+void* tchash_sha3_512(void* digest, const void* data, size_t dlen) { TCHASH_I_SIMPLE_BODY_(sha3_512,SHA3_512) }
+
+
+
+TCHash_SHAKE128* tchash_shake128_init(TCHash_SHAKE128* shake128)
+{
+    if(!shake128) return NULL;
+
+    /*shake128->total = 0;*/
+    memset(shake128->h, 0, sizeof(shake128->h));
+    shake128->blen = 0;
+
+    return shake128;
+}
+static void tchash_i_shake128_process_block(uint64_t h[25], uint64_t M[9]) { tchash_i_keccak1600_process_block(h, M, TCHASH_SHAKE128_BLOCK_SIZE, -1); }
+void tchash_shake128_process(TCHash_SHAKE128* shake128, const void* data, size_t dlen)
+{
+    TCHASH_I_PROCESS_BODY_(shake128,SHAKE128,le,64,/*{shake128->total+=dlen;}*/)
+}
+void* tchash_shake128_get(TCHash_SHAKE128* shake128, void* digest, size_t digestlen)
+{
+    TCHASH_I_GETKECCAK_BODY_SHAKE_(shake128,SHAKE128,digestlen)
+}
+void* tchash_shake128(void* digest, size_t digestlen, const void* data, size_t dlen)
+{
+    TCHash_SHAKE128 shake128;
+    tchash_shake128_init(&shake128);
+    tchash_shake128_process(&shake128, data, dlen);
+    return tchash_shake128_get(&shake128, digest, digestlen);
+}
+
+TCHash_SHAKE256* tchash_shake256_init(TCHash_SHAKE256* shake256)
+{
+    if(!shake256) return NULL;
+
+    /*shake256->total = 0;*/
+    memset(shake256->h, 0, sizeof(shake256->h));
+    shake256->blen = 0;
+
+    return shake256;
+}
+static void tchash_i_shake256_process_block(uint64_t h[25], uint64_t M[9]) { tchash_i_keccak1600_process_block(h, M, TCHASH_SHAKE256_BLOCK_SIZE, -1); }
+void tchash_shake256_process(TCHash_SHAKE256* shake256, const void* data, size_t dlen)
+{
+    TCHASH_I_PROCESS_BODY_(shake256,SHAKE256,le,64,/*{shake256->total+=dlen;}*/)
+}
+void* tchash_shake256_get(TCHash_SHAKE256* shake256, void* digest, size_t digestlen)
+{
+    TCHASH_I_GETKECCAK_BODY_SHAKE_(shake256,SHAKE256,digestlen)
+}
+void* tchash_shake256(void* digest, size_t digestlen, const void* data, size_t dlen)
+{
+    TCHash_SHAKE256 shake256;
+    tchash_shake256_init(&shake256);
+    tchash_shake256_process(&shake256, data, dlen);
+    return tchash_shake256_get(&shake256, digest, digestlen);
+}
 
 #endif /* TC_HASH_IMPLEMENTATION */
