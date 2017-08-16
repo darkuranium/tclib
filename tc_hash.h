@@ -256,6 +256,7 @@
 #ifndef TC_HASH_H_
 #define TC_HASH_H_
 
+#include <stddef.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
