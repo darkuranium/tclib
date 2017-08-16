@@ -12,7 +12,6 @@
  * 0.0.1    initial public release (MD5, FIPS 180-4: SHA1 & SHA2-{224,256,384,512,512/224,512/256})
  *
  * TODOs:
- * - SHA-3
  * - Tiger/{128,160,192}, Tiger2/{128,160,192}
  * - RIPEMD-{128,160,256,320}
  * - optimizations
