@@ -392,7 +392,7 @@ char* get_field(char** ptr, const char* rkey)
 TEST(StringConv,(
     static const unsigned char bytes[] = {0x01,0x23,0x45,0x67,0x89,0xAB,0xCD,0xEF};
 
-    char sbuf[sizeof(bytes)*2];
+    char sbuf[sizeof(bytes)*2+1];
     unsigned char bbuf[sizeof(bytes)];
 
     tchash_xstring_from_bytes(sbuf, bytes, sizeof(bytes), 0);
