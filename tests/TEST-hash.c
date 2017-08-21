@@ -19,7 +19,7 @@ void TEST_h_md5(const char* expected, const void* data, size_t dlen)
     tchash_md5_process(&md5, data, dlen);
     tchash_md5_get(&md5, bytes);
 
-    tchash_xstring_from_bytes(hexstr, bytes, sizeof(bytes));
+    tchash_xstring_from_bytes(hexstr, bytes, sizeof(bytes), 0);
     //printf("%s == %s\n", hexstr, expected);
     assert(!strcmp(hexstr, expected));
 }
@@ -164,7 +164,7 @@ char* get_field(char** ptr, const char* rkey)
         ASSERT_EQ(nbytes, ulen / 8);                                           \
                                                                                \
         tchash_##LHASH HARGS;                                                  \
-        size_t nstring = tchash_xstring_from_bytes(tresult, result, (DSIZE));  \
+        size_t nstring = tchash_xstring_from_bytes(tresult, result, (DSIZE), 0);\
         ASSERT_EQ(nstring, (DSIZE) * 2);                                       \
                                                                                \
         /*printf("%s == %s\n", tresult, md);*/                                 \
@@ -222,7 +222,7 @@ char* get_field(char** ptr, const char* rkey)
         }                                                                      \
                                                                                \
         char sresult[TCHASH_##UHASH##_DIGEST_SIZE*2+1];                        \
-        size_t slen = tchash_xstring_from_bytes(sresult, msg + 2 * TCHASH_##UHASH##_DIGEST_SIZE, TCHASH_##UHASH##_DIGEST_SIZE);\
+        size_t slen = tchash_xstring_from_bytes(sresult, msg + 2 * TCHASH_##UHASH##_DIGEST_SIZE, TCHASH_##UHASH##_DIGEST_SIZE, 0);\
         ASSERT_EQ(slen, 2 * TCHASH_##UHASH##_DIGEST_SIZE);                     \
         if(strcmp(sresult, md)) printf("%2d: %s\n", j, sresult);               \
         ASSERT_STREQ(sresult, md);                                             \
@@ -265,7 +265,7 @@ char* get_field(char** ptr, const char* rkey)
         ASSERT_EQ(nbytes, (MSGLEN));                                           \
                                                                                \
         tchash_##LHASH(result, ulen, data, nbytes);                            \
-        size_t nstring = tchash_xstring_from_bytes(tresult, result, ulen);     \
+        size_t nstring = tchash_xstring_from_bytes(tresult, result, ulen, 0);  \
         ASSERT_EQ(nstring, ulen * 2);                                          \
                                                                                \
         /*printf("%s == %s\n", tresult, md);*/                                 \
@@ -314,7 +314,7 @@ char* get_field(char** ptr, const char* rkey)
             tchash_##LHASH(msg, msg, mlen);                                    \
                                                                                \
         char sresult[TCHASH_##UHASH##_DIGEST_SIZE*2+1];                        \
-        size_t slen = tchash_xstring_from_bytes(sresult, msg, mlen);           \
+        size_t slen = tchash_xstring_from_bytes(sresult, msg, mlen, 0);        \
         ASSERT_EQ(slen, 2 * TCHASH_##UHASH##_DIGEST_SIZE);                     \
         if(strcmp(sresult, md)) printf("%2d: %s\n", j, sresult);               \
         ASSERT_STREQ(sresult, md);                                             \
@@ -405,7 +405,7 @@ char* get_field(char** ptr, const char* rkey)
         ASSERT_EQ(mlen, uoutlen);                                              \
         sdigest = realloc(sdigest, 2 * mlen + 1);                              \
         ASSERT_NOTNULL(sdigest);                                               \
-        size_t slen = tchash_xstring_from_bytes(sdigest, msg[!cmsg], mlen);    \
+        size_t slen = tchash_xstring_from_bytes(sdigest, msg[!cmsg], mlen, 0); \
         ASSERT_EQ(slen, 2 * mlen);                                             \
         /*if(strcmp(sdigest, md)) printf("%2d: %.0s\n", j, sdigest);*/         \
         ASSERT_STREQ(sdigest, md);                                             \
@@ -422,7 +422,7 @@ TEST(StringConv,(
     char sbuf[sizeof(bytes)*2];
     unsigned char bbuf[sizeof(bytes)];
 
-    tchash_xstring_from_bytes(sbuf, bytes, sizeof(bytes));
+    tchash_xstring_from_bytes(sbuf, bytes, sizeof(bytes), 0);
     tchash_bytes_from_xstring(bbuf, sbuf, sizeof(bytes)*2);
 
     ASSERT_MEMEQ(bytes,sizeof(bytes),bbuf,sizeof(bbuf));

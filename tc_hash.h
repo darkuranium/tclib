@@ -216,15 +216,16 @@
  *
  *
  * SYNOPSIS:
- *  size_t tchash_xstring_from_bytes(char* str, const void* data, size_t dlen);
+ *  size_t tchash_xstring_from_bytes(char* str, const void* data, size_t dlen, int uppercase);
  * PARAMETERS:
  *  - str: buffer of length at least `dlen * 2 + 1` bytes
  *  - data: data to convert
  *  - dlen: length of data in bytes
+ *  - uppercase: whether the resulting string should be uppercase
  * RETURN VALUE:
  *  Number of characters in the resulting string, excluding a terminating `\0`.
  * DESCRIPTION:
- *  Convert raw byte data into a lowercase hexadecimal string.
+ *  Convert raw byte data into a hexadecimal string.
  *
  *  For example, this will convert the bytes `{0x0a,0x1b,0x2c}` into
  *  `"0a1b2c"`, including the terminating `\0` (so, 6+1 characters are written).
@@ -264,7 +265,7 @@ extern "C" {
 #endif
 
 int tchash_secure_eq(const void* a, const void* b, size_t len);
-size_t tchash_xstring_from_bytes(char* str, const void* data, size_t dlen);
+size_t tchash_xstring_from_bytes(char* str, const void* data, size_t dlen, int uppercase);
 size_t tchash_bytes_from_xstring(void* data, const char* str, int slen);
 
 
@@ -653,16 +654,17 @@ int tchash_secure_eq(const void* a, const void* b, size_t len)
         res |= *ua++ ^ *ub++;
     return !!res;
 }
-size_t tchash_xstring_from_bytes(char* str, const void* data, size_t dlen)
+size_t tchash_xstring_from_bytes(char* str, const void* data, size_t dlen, int uppercase)
 {
-    static const char XVals[16] = "0123456789abcdef";
+    static const char XVals[2][16] = { "0123456789abcdef", "0123456789ABCDEF" };
+    uppercase = !!uppercase; /* convert to 0 or 1 */
 
     const unsigned char* udata = TC__VOID_CAST(const unsigned char*,data);
     size_t clen = dlen;
     while(clen--)
     {
-        *str++ = XVals[*udata >> 4];
-        *str++ = XVals[*udata & 15];
+        *str++ = XVals[uppercase][*udata >> 4];
+        *str++ = XVals[uppercase][*udata & 15];
         udata++;
     }
     *str = 0;
@@ -1223,7 +1225,7 @@ static void tchash_i_keccak_p1600(uint64_t A[25], int nrounds)
         memcpy(A, newA[!curA], sizeof(tmpA));
 }
 #undef A_
-static void tchash_i_keccak1600_process_block(uint64_t h[25], uint64_t* M, size_t bsize, int nrounds)
+static void tchash_i_keccak1600_process_block(uint64_t h[25], const uint64_t* M, size_t bsize, int nrounds)
 {
     size_t i;
     for(i = 0; i < bsize / sizeof(*M); i++)
