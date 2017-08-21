@@ -1682,13 +1682,7 @@ void* tchash_shake128_get(TCHash_SHAKE128* shake128, void* digest, size_t digest
 {
     TCHASH_I_GETKECCAK_BODY_SHAKE_(shake128,SHAKE128,digestlen)
 }
-void* tchash_shake128(void* digest, size_t digestlen, const void* data, size_t dlen)
-{
-    TCHash_SHAKE128 shake128;
-    tchash_shake128_init(&shake128);
-    tchash_shake128_process(&shake128, data, dlen);
-    return tchash_shake128_get(&shake128, digest, digestlen);
-}
+void* tchash_shake128(void* digest, size_t digestlen, const void* data, size_t dlen) { TCHASH_I_SIMPLELEN_BODY_(shake128,SHAKE128) }
 
 TCHash_SHAKE256* tchash_shake256_init(TCHash_SHAKE256* shake256)
 {
@@ -1709,12 +1703,6 @@ void* tchash_shake256_get(TCHash_SHAKE256* shake256, void* digest, size_t digest
 {
     TCHASH_I_GETKECCAK_BODY_SHAKE_(shake256,SHAKE256,digestlen)
 }
-void* tchash_shake256(void* digest, size_t digestlen, const void* data, size_t dlen)
-{
-    TCHash_SHAKE256 shake256;
-    tchash_shake256_init(&shake256);
-    tchash_shake256_process(&shake256, data, dlen);
-    return tchash_shake256_get(&shake256, digest, digestlen);
-}
+void* tchash_shake256(void* digest, size_t digestlen, const void* data, size_t dlen) { TCHASH_I_SIMPLELEN_BODY_(shake256,SHAKE256) }
 
 #endif /* TC_HASH_IMPLEMENTATION */
