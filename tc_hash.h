@@ -10,7 +10,7 @@
  * VERSION HISTORY:
  * 0.0.3    changed `tchash_xstring_from_bytes()` to accept an `uppercase` parameter
  *          fixed a theoretical bug with uninitialized data in some cases (by sheer dumb luck, the bug did not affect any existing implementations)
- *          added Tiger and Tiger2 hashes (-{192,160,128})
+ *          added Tiger and Tiger2 hashes (Tiger{,2}/{192,160,128})
  * 0.0.2    added "FIPS 202" algorithms (SHA3-{224,256,384,512}, SHAKE{128,256})
  * 0.0.1    initial public release (MD5, FIPS 180-4: SHA1 & SHA2-{224,256,384,512,512/224,512/256})
  *
