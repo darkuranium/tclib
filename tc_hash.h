@@ -8,6 +8,8 @@
  * URL: https://github.com/darkuranium/tclib
  *
  * VERSION HISTORY:
+ * 0.0.3    changed `tchash_xstring_from_bytes()` to accept an `uppercase` parameter
+ *          fixed a theoretical bug with uninitialized data in some cases (by sheer dumb luck, the bug did not affect any existing implementations)
  * 0.0.2    added "FIPS 202" algorithms (SHA3-{224,256,384,512}, SHAKE{128,256})
  * 0.0.1    initial public release (MD5, FIPS 180-4: SHA1 & SHA2-{224,256,384,512,512/224,512/256})
  *
@@ -630,7 +632,7 @@ static uint64_t tchash_i_rotr64(uint64_t x, int k)
         i = 0;                                                                 \
         tchash_i_##LHASH##_process_block(h, M);                                \
     }                                                                          \
-    memset(&M[i], 0, (sizeof(M) / sizeof(*M) - 2 - i) * sizeof(*M));           \
+    memset(&M[i], 0, (sizeof(M) / sizeof(*M) - i) * sizeof(*M) - sizeof(LHASH->total));\
     SETLENGTH                                                                  \
     tchash_i_##LHASH##_process_block(h, M);                                    \
                                                                                \
