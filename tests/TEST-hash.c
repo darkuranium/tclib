@@ -419,11 +419,55 @@ TEST(MD5,(
         size_t dlen = strlen(data);
         const char* expected = TestVectors[i+1];
 
-        TCHash_MD5 md5;
-        tchash_md5_init(&md5);
-        tchash_md5_process(&md5, data, dlen);
-        tchash_md5_get(&md5, bytes);
+        tchash_md5(bytes, data, dlen);
+        tchash_xstring_from_bytes(hexstr, bytes, sizeof(bytes), 0);
+        //printf("%s == %s\n", hexstr, expected);
+        ASSERT_STREQ(hexstr, expected);
+    }
+))
 
+TEST(Tiger,(
+    static const char* TestVectors[] = {
+        "", "3293ac630c13f0245f92bbb1766e16167a4e58492dde73f3",
+        "The quick brown fox jumps over the lazy dog", "6d12a41e72e644f017b6f0e2f7b44c6285f06dd5d2c5b075",
+        "The quick brown fox jumps over the lazy cog", "a8f04b0f7201a0d728101c9d26525b31764a3493fcd8458f",
+    };
+
+    char bytes[TCHASH_TIGER192_DIGEST_SIZE];
+    char hexstr[sizeof(bytes)+1];
+
+    size_t i;
+    for(i = 0; i < sizeof(TestVectors) / sizeof(*TestVectors); i += 2)
+    {
+        const char* data = TestVectors[i+0];
+        size_t dlen = strlen(data);
+        const char* expected = TestVectors[i+1];
+
+        tchash_tiger192(bytes, data, dlen);
+        tchash_xstring_from_bytes(hexstr, bytes, sizeof(bytes), 0);
+        //printf("%s == %s\n", hexstr, expected);
+        ASSERT_STREQ(hexstr, expected);
+    }
+))
+
+TEST(Tiger2,(
+    static const char* TestVectors[] = {
+        "", "4441be75f6018773c206c22745374b924aa8313fef919f41",
+        "The quick brown fox jumps over the lazy dog", "976abff8062a2e9dcea3a1ace966ed9c19cb85558b4976d8",
+        "The quick brown fox jumps over the lazy cog", "09c11330283a27efb51930aa7dc1ec624ff738a8d9bdd3df",
+    };
+
+    char bytes[TCHASH_TIGER2_192_DIGEST_SIZE];
+    char hexstr[sizeof(bytes)+1];
+
+    size_t i;
+    for(i = 0; i < sizeof(TestVectors) / sizeof(*TestVectors); i += 2)
+    {
+        const char* data = TestVectors[i+0];
+        size_t dlen = strlen(data);
+        const char* expected = TestVectors[i+1];
+
+        tchash_tiger2_192(bytes, data, dlen);
         tchash_xstring_from_bytes(hexstr, bytes, sizeof(bytes), 0);
         //printf("%s == %s\n", hexstr, expected);
         ASSERT_STREQ(hexstr, expected);
@@ -489,6 +533,10 @@ int main(void)
     TEST_EXEC(StringConv);
 
     TEST_EXEC(MD5);
+
+    TEST_HEADER("Tiger");
+        TEST_EXEC(Tiger);
+        TEST_EXEC(Tiger2);
 
     TEST_HEADER("SHA-1");
         TEST_EXEC(SHA1_ShortMsg);
