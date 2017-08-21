@@ -9,33 +9,6 @@
 
 #include "test.h"
 
-void TEST_h_md5(const char* expected, const void* data, size_t dlen)
-{
-    char bytes[TCHASH_MD5_DIGEST_SIZE];
-    char hexstr[sizeof(bytes)+1];
-
-    TCHash_MD5 md5;
-    tchash_md5_init(&md5);
-    tchash_md5_process(&md5, data, dlen);
-    tchash_md5_get(&md5, bytes);
-
-    tchash_xstring_from_bytes(hexstr, bytes, sizeof(bytes), 0);
-    //printf("%s == %s\n", hexstr, expected);
-    assert(!strcmp(hexstr, expected));
-}
-void TEST_md5(void)
-{
-    static const char* TestVectors[] = {
-        "", "d41d8cd98f00b204e9800998ecf8427e",
-        "The quick brown fox jumps over the lazy dog", "9e107d9d372bb6826bd81d3542a419d6",
-        "The quick brown fox jumps over the lazy dog.", "e4d909c290d0fb1ca068ffaddf22cbd0",
-    };
-
-    size_t i;
-    for(i = 0; i < sizeof(TestVectors) / sizeof(*TestVectors); i += 2)
-        TEST_h_md5(TestVectors[i+1], TestVectors[i+0], strlen(TestVectors[i+0]));
-}
-
 static void* read_all(uint64_t* len, const char* fname)
 {
     char* data = NULL;
@@ -436,10 +409,26 @@ TEST(MD5,(
         "The quick brown fox jumps over the lazy dog.", "e4d909c290d0fb1ca068ffaddf22cbd0",
     };
 
+    char bytes[TCHASH_MD5_DIGEST_SIZE];
+    char hexstr[sizeof(bytes)+1];
+
     size_t i;
     for(i = 0; i < sizeof(TestVectors) / sizeof(*TestVectors); i += 2)
-        TEST_h_md5(TestVectors[i+1], TestVectors[i+0], strlen(TestVectors[i+0]));
-));
+    {
+        const char* data = TestVectors[i+0];
+        size_t dlen = strlen(data);
+        const char* expected = TestVectors[i+1];
+
+        TCHash_MD5 md5;
+        tchash_md5_init(&md5);
+        tchash_md5_process(&md5, data, dlen);
+        tchash_md5_get(&md5, bytes);
+
+        tchash_xstring_from_bytes(hexstr, bytes, sizeof(bytes), 0);
+        //printf("%s == %s\n", hexstr, expected);
+        ASSERT_STREQ(hexstr, expected);
+    }
+))
 
 // SHA-1
 TEST(SHA1_ShortMsg,HELPER_MSG(sha1,SHA1,"sha/SHA1ShortMsg"))
