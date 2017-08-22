@@ -122,11 +122,15 @@
  * To help decide: avoid MD5 & SHA1 if at all possible (both have been broken;
  * they are included because some file formats and protocols still depend on
  * them, and because they still have *some* use as non-crypto-secure checksums).
- * In fact, avoid any hash shorter than 160 bits (such as the Tiger/128).
+ * In fact, avoid any hash with fewer than 80 (or better yet, 112) bits of
+ * security. This includes avoiding any hashes with digest sizes smaller than 160
+ * bits (e.g. RIPEMD-128), or those directly derived from such (RIPEMD-256).
  * SHA2-512/256 is a good choice for performance (good performance on 64-bit,
  * somewhat resistant against length extension attacks); for state-of-the-art
  * security (at the cost of speed), use an algorithm in the SHA3 family (this
  * includes the SHAKE{128,256} algorithms).
+ * Finally, note that picking a secure function is required, but ***not***
+ * sufficient for ensuring security in most cases.
  *
  *
  * What follows is the API reference; again, using MD5 as an example.
