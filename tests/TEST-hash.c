@@ -463,7 +463,7 @@ TEST(MD5,(
     };
 
     char bytes[TCHASH_MD5_DIGEST_SIZE];
-    char hexstr[sizeof(bytes)+1];
+    char hexstr[2*sizeof(bytes)+1];
 
     size_t i;
     for(i = 0; i < sizeof(TestVectors) / sizeof(*TestVectors); i += 2)
@@ -479,6 +479,7 @@ TEST(MD5,(
     }
 ))
 
+// Tiger
 TEST(Tiger,(
     static const char* TestVectors[] = {
         "", "3293ac630c13f0245f92bbb1766e16167a4e58492dde73f3",
@@ -487,7 +488,7 @@ TEST(Tiger,(
     };
 
     char bytes[TCHASH_TIGER192_DIGEST_SIZE];
-    char hexstr[sizeof(bytes)+1];
+    char hexstr[2*sizeof(bytes)+1];
 
     size_t i;
     for(i = 0; i < sizeof(TestVectors) / sizeof(*TestVectors); i += 2)
@@ -502,7 +503,6 @@ TEST(Tiger,(
         ASSERT_STREQ(hexstr, expected);
     }
 ))
-
 TEST(Tiger2,(
     static const char* TestVectors[] = {
         "", "4441be75f6018773c206c22745374b924aa8313fef919f41",
@@ -511,7 +511,7 @@ TEST(Tiger2,(
     };
 
     char bytes[TCHASH_TIGER2_192_DIGEST_SIZE];
-    char hexstr[sizeof(bytes)+1];
+    char hexstr[2*sizeof(bytes)+1];
 
     size_t i;
     for(i = 0; i < sizeof(TestVectors) / sizeof(*TestVectors); i += 2)
