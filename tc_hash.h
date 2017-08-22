@@ -2,7 +2,7 @@
  * tc_hash.h: Cryptographic hash function library.
  *
  * DEPENDS:
- * VERSION: 0.0.1 (2017-08-12)
+ * VERSION: 0.0.4 (2017-08-22)
  * LICENSE: CC0 & Boost (dual-licensed)
  * AUTHOR: Tim Cas
  * URL: https://github.com/darkuranium/tclib
