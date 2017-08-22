@@ -88,6 +88,13 @@
  *
  * The following algorithms are available:
  * - MD5 (not recommended)
+ * - Tiger
+ *      - Tiger/192
+ *      - Tiger/160
+ *      - Tiger/128
+ *      - Tiger2/192
+ *      - Tiger2/160
+ *      - Tiger2/128
  * - SHA1 [FIPS 180-4] (not recommended)
  * - SHA2 [FIPS 180-4]:
  *      - SHA2-256 (a.k.a SHA-256; 32-bit)
