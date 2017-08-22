@@ -365,6 +365,9 @@ typedef struct TCHash_Tiger
     union { uint64_t M[TCHASH_TIGER_BLOCK_SIZE / sizeof(uint64_t)]; unsigned char b[TCHASH_TIGER_BLOCK_SIZE]; } buf;
     unsigned char blen;
 } TCHash_Tiger;
+typedef TCHash_Tiger TCHash_Tiger192;
+typedef TCHash_Tiger TCHash_Tiger160;
+typedef TCHash_Tiger TCHash_Tiger128;
 TCHash_Tiger* tchash_tiger_init(TCHash_Tiger* tiger);
 #define tchash_tiger192_init    tchash_tiger_init
 #define tchash_tiger160_init    tchash_tiger_init
@@ -386,6 +389,9 @@ void* tchash_tiger128(void* digest, const void* data, size_t dlen);
 #define TCHASH_TIGER2_160_DIGEST_SIZE TCHASH_TIGER160_DIGEST_SIZE
 #define TCHASH_TIGER2_128_DIGEST_SIZE TCHASH_TIGER128_DIGEST_SIZE
 typedef TCHash_Tiger TCHash_Tiger2;
+typedef TCHash_Tiger2 TCHash_Tiger2_192;
+typedef TCHash_Tiger2 TCHash_Tiger2_160;
+typedef TCHash_Tiger2 TCHash_Tiger2_128;
 #define tchash_tiger2_init      tchash_tiger_init
 #define tchash_tiger2_192_init  tchash_tiger2_init
 #define tchash_tiger2_160_init  tchash_tiger2_init
