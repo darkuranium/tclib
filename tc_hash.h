@@ -8,7 +8,7 @@
  * URL: https://github.com/darkuranium/tclib
  *
  * VERSION HISTORY:
- * 0.0.4    added RIPEMD-{128,160,256,360}
+ * 0.0.4    added RIPEMD-{128,160,256,320}
  * 0.0.3    changed `tchash_xstring_from_bytes()` to accept an `uppercase` parameter
  *          fixed a theoretical bug with uninitialized data in some cases (by sheer dumb luck, the bug did not affect any existing implementations)
  *          added Tiger and Tiger2 hashes (Tiger{,2}/{192,160,128})
