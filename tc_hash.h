@@ -122,6 +122,7 @@
  * To help decide: avoid MD5 & SHA1 if at all possible (both have been broken;
  * they are included because some file formats and protocols still depend on
  * them, and because they still have *some* use as non-crypto-secure checksums).
+ * In fact, avoid any hash shorter than 160 bits (such as the Tiger/128).
  * SHA2-512/256 is a good choice for performance (good performance on 64-bit,
  * somewhat resistant against length extension attacks); for state-of-the-art
  * security (at the cost of speed), use an algorithm in the SHA3 family (this
