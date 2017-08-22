@@ -8,6 +8,7 @@
  * URL: https://github.com/darkuranium/tclib
  *
  * VERSION HISTORY:
+ * 0.0.4    added RIPEMD-{128,160,256,360}
  * 0.0.3    changed `tchash_xstring_from_bytes()` to accept an `uppercase` parameter
  *          fixed a theoretical bug with uninitialized data in some cases (by sheer dumb luck, the bug did not affect any existing implementations)
  *          added Tiger and Tiger2 hashes (Tiger{,2}/{192,160,128})
@@ -91,10 +92,15 @@
  * - Tiger
  *      - Tiger/192
  *      - Tiger/160
- *      - Tiger/128
+ *      - Tiger/128 (not recommended)
  *      - Tiger2/192
  *      - Tiger2/160
- *      - Tiger2/128
+ *      - Tiger2/128 (not recommended)
+ * - RIPEMD
+ *      - RIPEMD-128 (not recommended)
+ *      - RIPEMD-160
+ *      - RIPEMD-256 (not recommended)
+ *      - RIPEMD-320
  * - SHA1 [FIPS 180-4] (not recommended)
  * - SHA2 [FIPS 180-4]:
  *      - SHA2-256 (a.k.a SHA-256; 32-bit)
@@ -397,6 +403,63 @@ void* tchash_tiger2_192(void* digest, const void* data, size_t dlen);
 void* tchash_tiger2_160(void* digest, const void* data, size_t dlen);
 void* tchash_tiger2_128(void* digest, const void* data, size_t dlen);
 
+
+#define TCHASH_RIPEMD128_BLOCK_SIZE     (16*4)
+#define TCHASH_RIPEMD128_DIGEST_SIZE    (128/8)
+typedef struct TCHash_RIPEMD128
+{
+    uint64_t total;
+    uint32_t h[4];
+    union { uint32_t M[TCHASH_RIPEMD128_BLOCK_SIZE / sizeof(uint32_t)]; unsigned char b[TCHASH_RIPEMD128_BLOCK_SIZE]; } buf;
+    unsigned char blen;
+} TCHash_RIPEMD128;
+TCHash_RIPEMD128* tchash_ripemd128_init(TCHash_RIPEMD128* ripemd128);
+void tchash_ripemd128_process(TCHash_RIPEMD128* ripemd128, const void* data, size_t dlen);
+void* tchash_ripemd128_get(TCHash_RIPEMD128* ripemd128, void* digest);
+void* tchash_ripemd128(void* digest, const void* data, size_t dlen);
+
+#define TCHASH_RIPEMD160_BLOCK_SIZE     (16*4)
+#define TCHASH_RIPEMD160_DIGEST_SIZE    (160/8)
+typedef struct TCHash_RIPEMD160
+{
+    uint64_t total;
+    uint32_t h[5];
+    union { uint32_t M[TCHASH_RIPEMD160_BLOCK_SIZE / sizeof(uint32_t)]; unsigned char b[TCHASH_RIPEMD160_BLOCK_SIZE]; } buf;
+    unsigned char blen;
+} TCHash_RIPEMD160;
+TCHash_RIPEMD160* tchash_ripemd160_init(TCHash_RIPEMD160* ripemd160);
+void tchash_ripemd160_process(TCHash_RIPEMD160* ripemd160, const void* data, size_t dlen);
+void* tchash_ripemd160_get(TCHash_RIPEMD160* ripemd160, void* digest);
+void* tchash_ripemd160(void* digest, const void* data, size_t dlen);
+
+#define TCHASH_RIPEMD256_BLOCK_SIZE     (16*4)
+#define TCHASH_RIPEMD256_DIGEST_SIZE    (256/8)
+typedef struct TCHash_RIPEMD256
+{
+    uint64_t total;
+    uint32_t h[2*4];
+    union { uint32_t M[TCHASH_RIPEMD256_BLOCK_SIZE / sizeof(uint32_t)]; unsigned char b[TCHASH_RIPEMD256_BLOCK_SIZE]; } buf;
+    unsigned char blen;
+} TCHash_RIPEMD256;
+TCHash_RIPEMD256* tchash_ripemd256_init(TCHash_RIPEMD256* ripemd256);
+void tchash_ripemd256_process(TCHash_RIPEMD256* ripemd256, const void* data, size_t dlen);
+void* tchash_ripemd256_get(TCHash_RIPEMD256* ripemd256, void* digest);
+void* tchash_ripemd256(void* digest, const void* data, size_t dlen);
+
+#define TCHASH_RIPEMD320_BLOCK_SIZE     (16*4)
+#define TCHASH_RIPEMD320_DIGEST_SIZE    (320/8)
+typedef struct TCHash_RIPEMD320
+{
+    uint64_t total;
+    uint32_t h[2*5];
+    union { uint32_t M[TCHASH_RIPEMD320_BLOCK_SIZE / sizeof(uint32_t)]; unsigned char b[TCHASH_RIPEMD320_BLOCK_SIZE]; } buf;
+    unsigned char blen;
+} TCHash_RIPEMD320;
+TCHash_RIPEMD320* tchash_ripemd320_init(TCHash_RIPEMD320* ripemd320);
+void tchash_ripemd320_process(TCHash_RIPEMD320* ripemd320, const void* data, size_t dlen);
+void* tchash_ripemd320_get(TCHash_RIPEMD320* ripemd320, void* digest);
+void* tchash_ripemd320(void* digest, const void* data, size_t dlen);
+
 #define TCHASH_SHA1_BLOCK_SIZE      64
 #define TCHASH_SHA1_DIGEST_SIZE     20
 typedef struct TCHash_SHA1
@@ -607,32 +670,32 @@ void* tchash_shake256(void* digest, size_t digestlen, const void* data, size_t d
 
 #define TCHASH_I_MIN(x,y)   ((x)<(y)?(x):(y))
 
-static uint16_t tchash_i_swap16(uint16_t x)
+static uint16_t tchash_i_bswap16(uint16_t x)
 {
     return (x << 8) | (x >> 8);
 }
-static uint32_t tchash_i_swap32(uint32_t x)
+static uint32_t tchash_i_bswap32(uint32_t x)
 {
-    return ((uint32_t)tchash_i_swap16(x) << 16) | tchash_i_swap16(x >> 16);
+    return ((uint32_t)tchash_i_bswap16(x) << 16) | tchash_i_bswap16(x >> 16);
 }
-static uint64_t tchash_i_swap64(uint64_t x)
+static uint64_t tchash_i_bswap64(uint64_t x)
 {
-    return ((uint64_t)tchash_i_swap32(x) << 32) | tchash_i_swap32(x >> 32);
+    return ((uint64_t)tchash_i_bswap32(x) << 32) | tchash_i_bswap32(x >> 32);
 }
 
 #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
 #define TCHASH_I_FROM_LE16(x)   ((uint16_t)(x))
 #define TCHASH_I_FROM_LE32(x)   ((uint32_t)(x))
 #define TCHASH_I_FROM_LE64(x)   ((uint64_t)(x))
-#define TCHASH_I_FROM_BE16(x)   tchash_i_swap16(x)
-#define TCHASH_I_FROM_BE32(x)   tchash_i_swap32(x)
-#define TCHASH_I_FROM_BE64(x)   tchash_i_swap64(x)
+#define TCHASH_I_FROM_BE16(x)   tchash_i_bswap16(x)
+#define TCHASH_I_FROM_BE32(x)   tchash_i_bswap32(x)
+#define TCHASH_I_FROM_BE64(x)   tchash_i_bswap64(x)
 #define TCHASH_I_TO_LE16(x)     ((uint16_t)(x))
 #define TCHASH_I_TO_LE32(x)     ((uint32_t)(x))
 #define TCHASH_I_TO_LE64(x)     ((uint64_t)(x))
-#define TCHASH_I_TO_BE16(x)     tchash_i_swap16(x)
-#define TCHASH_I_TO_BE32(x)     tchash_i_swap32(x)
-#define TCHASH_I_TO_BE64(x)     tchash_i_swap64(x)
+#define TCHASH_I_TO_BE16(x)     tchash_i_bswap16(x)
+#define TCHASH_I_TO_BE32(x)     tchash_i_bswap32(x)
+#define TCHASH_I_TO_BE64(x)     tchash_i_bswap64(x)
 static void tchash_i_from_le32arr(uint32_t* x, size_t len) {}
 static void tchash_i_from_be32arr(uint32_t* x, size_t len) { while(len--) x[len] = TCHASH_I_FROM_BE32(x[len]); }
 static void tchash_i_to_le32arr(uint32_t* x, size_t len) {}
@@ -642,15 +705,15 @@ static void tchash_i_from_be64arr(uint64_t* x, size_t len) { while(len--) x[len]
 static void tchash_i_to_le64arr(uint64_t* x, size_t len) {}
 static void tchash_i_to_be64arr(uint64_t* x, size_t len) { while(len--) x[len] = TCHASH_I_TO_BE64(x[len]); }
 #elif __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-#define TCHASH_I_FROM_LE16(x)   tchash_i_swap16(x)
-#define TCHASH_I_FROM_LE32(x)   tchash_i_swap32(x)
-#define TCHASH_I_FROM_LE64(x)   tchash_i_swap64(x)
+#define TCHASH_I_FROM_LE16(x)   tchash_i_bswap16(x)
+#define TCHASH_I_FROM_LE32(x)   tchash_i_bswap32(x)
+#define TCHASH_I_FROM_LE64(x)   tchash_i_bswap64(x)
 #define TCHASH_I_FROM_BE16(x)   ((uint16_t)(x))
 #define TCHASH_I_FROM_BE32(x)   ((uint32_t)(x))
 #define TCHASH_I_FROM_BE64(x)   ((uint64_t)(x))
-#define TCHASH_I_TO_LE16(x)     tchash_i_swap16(x)
-#define TCHASH_I_TO_LE32(x)     tchash_i_swap32(x)
-#define TCHASH_I_TO_LE64(x)     tchash_i_swap64(x)
+#define TCHASH_I_TO_LE16(x)     tchash_i_bswap16(x)
+#define TCHASH_I_TO_LE32(x)     tchash_i_bswap32(x)
+#define TCHASH_I_TO_LE64(x)     tchash_i_bswap64(x)
 #define TCHASH_I_TO_BE16(x)     ((uint16_t)(x))
 #define TCHASH_I_TO_BE32(x)     ((uint32_t)(x))
 #define TCHASH_I_TO_BE64(x)     ((uint64_t)(x))
@@ -1284,6 +1347,244 @@ void* tchash_tiger2(void* digest, size_t digestlen, const void* data, size_t dle
 void* tchash_tiger2_192(void* digest, const void* data, size_t dlen) { return tchash_tiger2(digest, TCHASH_TIGER2_192_DIGEST_SIZE, data, dlen); }
 void* tchash_tiger2_160(void* digest, const void* data, size_t dlen) { return tchash_tiger2(digest, TCHASH_TIGER2_160_DIGEST_SIZE, data, dlen); }
 void* tchash_tiger2_128(void* digest, const void* data, size_t dlen) { return tchash_tiger2(digest, TCHASH_TIGER2_128_DIGEST_SIZE, data, dlen); }
+
+#define SWAP_(T,x,y) do { T tmp_ = (x); x = (y); y = tmp_; } while(0)
+static const uint32_t tchash_i_ripemd128_InitH[2*4] = {
+    UINT32_C(0x67452301), UINT32_C(0xEFCDAB89), UINT32_C(0x98BADCFE), UINT32_C(0x10325476),
+    UINT32_C(0x76543210), UINT32_C(0xFEDCBA98), UINT32_C(0x89ABCDEF), UINT32_C(0x01234567),
+};
+static const uint32_t tchash_i_ripemd160_InitH[2*5] = {
+    UINT32_C(0x67452301), UINT32_C(0xEFCDAB89), UINT32_C(0x98BADCFE), UINT32_C(0x10325476), UINT32_C(0xC3D2E1F0),
+    UINT32_C(0x76543210), UINT32_C(0xFEDCBA98), UINT32_C(0x89ABCDEF), UINT32_C(0x01234567), UINT32_C(0x3C2D1E0F),
+};
+static const uint32_t tchash_i_ripemd128_K[2][4] = {
+    {UINT32_C(0x00000000), UINT32_C(0x5A827999), UINT32_C(0x6ED9EBA1), UINT32_C(0x8F1BBCDC)},
+    {UINT32_C(0x50A28BE6), UINT32_C(0x5C4DD124), UINT32_C(0x6D703EF3), UINT32_C(0x00000000)},
+};
+static const uint32_t tchash_i_ripemd160_K[2][5] = {
+    {UINT32_C(0x00000000), UINT32_C(0x5A827999), UINT32_C(0x6ED9EBA1), UINT32_C(0x8F1BBCDC), UINT32_C(0xA953FD4E)},
+    {UINT32_C(0x50A28BE6), UINT32_C(0x5C4DD124), UINT32_C(0x6D703EF3), UINT32_C(0x7A6D76E9), UINT32_C(0x00000000)},
+};
+static const uint32_t tchash_i_ripemd_r1[5*16] = {
+    0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,
+    7,4,13,1,10,6,15,3,12,0,9,5,2,14,11,8,
+    3,10,14,4,9,15,8,1,2,7,0,6,13,11,5,12,
+    1,9,11,10,0,8,12,4,13,3,7,15,14,5,6,2,
+    4,0,5,9,7,12,2,10,14,1,3,8,11,6,15,13,
+};
+static const uint32_t tchash_i_ripemd_r2[5*16] = {
+    5,14,7,0,9,2,11,4,13,6,15,8,1,10,3,12,
+    6,11,3,7,0,13,5,10,14,15,8,12,4,9,1,2,
+    15,5,1,3,7,14,6,9,11,8,12,2,10,0,4,13,
+    8,6,4,1,3,11,15,0,5,12,2,13,9,7,10,14,
+    12,15,10,4,1,5,8,7,6,2,13,14,0,3,9,11,
+};
+static const uint32_t tchash_i_ripemd_s1[5*16] = {
+    11,14,15,12,5,8,7,9,11,13,14,15,6,7,9,8,
+    7,6,8,13,11,9,7,15,7,12,15,9,11,7,13,12,
+    11,13,6,7,14,9,13,15,14,8,13,6,5,12,7,5,
+    11,12,14,15,14,15,9,8,9,14,5,6,8,6,5,12,
+    9,15,5,11,6,8,13,12,5,12,13,14,11,8,5,6,
+};
+static const uint32_t tchash_i_ripemd_s2[5*16] = {
+    8,9,9,11,13,15,15,5,7,7,8,11,14,14,12,6,
+    9,13,15,7,12,8,9,11,7,7,12,7,6,15,13,11,
+    9,7,15,11,8,6,6,14,12,13,5,14,13,13,7,5,
+    15,5,8,11,14,14,6,14,6,9,12,9,12,5,15,8,
+    8,5,12,9,12,5,14,6,8,13,6,5,15,13,11,11,
+};
+static uint32_t tchash_i_ripemd_f(int j, uint32_t x, uint32_t y, uint32_t z)
+{
+    switch(j >> 4)
+    {
+    case 0: return x ^ y ^ z;
+    case 1: return (x & y) | (~x & z);
+    case 2: return (x | ~y) ^ z;
+    case 3: return (x & z) | (y & ~z);
+    case 4: return x ^ (y | ~z);
+    }
+    TC__ASSERT(0);
+    return 0;
+}
+
+// http://homes.esat.kuleuven.be/~bosselae/ripemd160/pdf/AB-9601/AB-9601.pdf
+TCHash_RIPEMD128* tchash_ripemd128_init(TCHash_RIPEMD128* ripemd128)
+{
+    if(!ripemd128) return NULL;
+
+    ripemd128->total = 0;
+    memcpy(ripemd128->h, tchash_i_ripemd128_InitH, sizeof(ripemd128->h));
+    ripemd128->blen = 0;
+
+    return ripemd128;
+}
+static void tchash_i_ripemd128_process_block(uint32_t h[4], const uint32_t M[16])
+{
+    uint32_t a1 = h[0], b1 = h[1], c1 = h[2], d1 = h[3];
+    uint32_t a2 = h[0], b2 = h[1], c2 = h[2], d2 = h[3];
+    uint32_t t;
+
+    int j;
+    for(j = 0; j < 4*16; j++)
+    {
+        t = tchash_i_rotl32(a1 + tchash_i_ripemd_f(       j    , b1, c1, d1) + M[tchash_i_ripemd_r1[j]] + tchash_i_ripemd128_K[0][j/16], tchash_i_ripemd_s1[j]);
+        a1 = d1; d1 = c1; c1 = b1; b1 = t;
+
+        t = tchash_i_rotl32(a2 + tchash_i_ripemd_f(4*16 - j - 1, b2, c2, d2) + M[tchash_i_ripemd_r2[j]] + tchash_i_ripemd128_K[1][j/16], tchash_i_ripemd_s2[j]);
+        a2 = d2; d2 = c2; c2 = b2; b2 = t;
+    }
+    t    = h[1] + c1 + d2;
+    h[1] = h[2] + d1 + a2;
+    h[2] = h[3] + a1 + b2;
+    h[3] = h[0] + b1 + c2;
+    h[0] = t;
+}
+void tchash_ripemd128_process(TCHash_RIPEMD128* ripemd128, const void* data, size_t dlen)
+{
+    TCHASH_I_PROCESS_BODY_(ripemd128,RIPEMD128,le,32,{ripemd128->total += dlen;})
+}
+void* tchash_ripemd128_get(TCHash_RIPEMD128* ripemd128, void* digest)
+{
+    TCHASH_I_GET_BODY_(ripemd128,RIPEMD128,le,32,{M[14] = ripemd128->total << 3; M[15] = ripemd128->total >> 29;},sizeof(h)/sizeof(*h),sizeof(h))
+}
+void* tchash_ripemd128(void* digest, const void* data, size_t dlen) { TCHASH_I_SIMPLE_BODY_(ripemd128,RIPEMD128) }
+
+TCHash_RIPEMD160* tchash_ripemd160_init(TCHash_RIPEMD160* ripemd160)
+{
+    if(!ripemd160) return NULL;
+
+    ripemd160->total = 0;
+    memcpy(ripemd160->h, tchash_i_ripemd160_InitH, sizeof(ripemd160->h));
+    ripemd160->blen = 0;
+
+    return ripemd160;
+}
+static void tchash_i_ripemd160_process_block(uint32_t h[5], const uint32_t M[16])
+{
+    uint32_t a1 = h[0], b1 = h[1], c1 = h[2], d1 = h[3], e1 = h[4];
+    uint32_t a2 = h[0], b2 = h[1], c2 = h[2], d2 = h[3], e2 = h[4];
+    uint32_t t;
+
+    int j;
+    for(j = 0; j < 5*16; j++)
+    {
+        t = tchash_i_rotl32(a1 + tchash_i_ripemd_f(       j    , b1, c1, d1) + M[tchash_i_ripemd_r1[j]] + tchash_i_ripemd160_K[0][j/16], tchash_i_ripemd_s1[j]) + e1;
+        a1 = e1; e1 = d1; d1 = tchash_i_rotl32(c1, 10); c1 = b1; b1 = t;
+
+        t = tchash_i_rotl32(a2 + tchash_i_ripemd_f(5*16 - j - 1, b2, c2, d2) + M[tchash_i_ripemd_r2[j]] + tchash_i_ripemd160_K[1][j/16], tchash_i_ripemd_s2[j]) + e2;
+        a2 = e2; e2 = d2; d2 = tchash_i_rotl32(c2, 10); c2 = b2; b2 = t;
+    }
+    t    = h[1] + c1 + d2;
+    h[1] = h[2] + d1 + e2;
+    h[2] = h[3] + e1 + a2;
+    h[3] = h[4] + a1 + b2;
+    h[4] = h[0] + b1 + c2;
+    h[0] = t;
+}
+void tchash_ripemd160_process(TCHash_RIPEMD160* ripemd160, const void* data, size_t dlen)
+{
+    TCHASH_I_PROCESS_BODY_(ripemd160,RIPEMD160,le,32,{ripemd160->total += dlen;})
+}
+void* tchash_ripemd160_get(TCHash_RIPEMD160* ripemd160, void* digest)
+{
+    TCHASH_I_GET_BODY_(ripemd160,RIPEMD160,le,32,{M[14] = ripemd160->total << 3; M[15] = ripemd160->total >> 29;},sizeof(h)/sizeof(*h),sizeof(h))
+}
+void* tchash_ripemd160(void* digest, const void* data, size_t dlen) { TCHASH_I_SIMPLE_BODY_(ripemd160,RIPEMD160) }
+
+TCHash_RIPEMD256* tchash_ripemd256_init(TCHash_RIPEMD256* ripemd256)
+{
+    if(!ripemd256) return NULL;
+
+    ripemd256->total = 0;
+    memcpy(ripemd256->h, tchash_i_ripemd128_InitH, sizeof(ripemd256->h));
+    ripemd256->blen = 0;
+
+    return ripemd256;
+}
+static void tchash_i_ripemd256_process_block(uint32_t h[2*4], const uint32_t M[16])
+{
+    uint32_t a1 = h[0], b1 = h[1], c1 = h[2], d1 = h[3];
+    uint32_t a2 = h[4], b2 = h[5], c2 = h[6], d2 = h[7];
+    uint32_t t;
+
+    int j;
+    for(j = 0; j < 4*16; j++)
+    {
+        t = tchash_i_rotl32(a1 + tchash_i_ripemd_f(       j    , b1, c1, d1) + M[tchash_i_ripemd_r1[j]] + tchash_i_ripemd128_K[0][j/16], tchash_i_ripemd_s1[j]);
+        a1 = d1; d1 = c1; c1 = b1; b1 = t;
+
+        t = tchash_i_rotl32(a2 + tchash_i_ripemd_f(4*16 - j - 1, b2, c2, d2) + M[tchash_i_ripemd_r2[j]] + tchash_i_ripemd128_K[1][j/16], tchash_i_ripemd_s2[j]);
+        a2 = d2; d2 = c2; c2 = b2; b2 = t;
+
+        switch(j)
+        {
+        case 1*16-1: SWAP_(uint32_t,a1,a2); break;
+        case 2*16-1: SWAP_(uint32_t,b1,b2); break;
+        case 3*16-1: SWAP_(uint32_t,c1,c2); break;
+        case 4*16-1: SWAP_(uint32_t,d1,d2); break;
+        }
+    }
+    h[0] += a1; h[1] += b1; h[2] += c1; h[3] += d1;
+    h[4] += a2; h[5] += b2; h[6] += c2; h[7] += d2;
+}
+void tchash_ripemd256_process(TCHash_RIPEMD256* ripemd256, const void* data, size_t dlen)
+{
+    TCHASH_I_PROCESS_BODY_(ripemd256,RIPEMD256,le,32,{ripemd256->total += dlen;})
+}
+void* tchash_ripemd256_get(TCHash_RIPEMD256* ripemd256, void* digest)
+{
+    TCHASH_I_GET_BODY_(ripemd256,RIPEMD256,le,32,{M[14] = ripemd256->total << 3; M[15] = ripemd256->total >> 29;},sizeof(h)/sizeof(*h),sizeof(h))
+}
+void* tchash_ripemd256(void* digest, const void* data, size_t dlen) { TCHASH_I_SIMPLE_BODY_(ripemd256,RIPEMD256) }
+
+TCHash_RIPEMD320* tchash_ripemd320_init(TCHash_RIPEMD320* ripemd320)
+{
+    if(!ripemd320) return NULL;
+
+    ripemd320->total = 0;
+    memcpy(ripemd320->h, tchash_i_ripemd160_InitH, sizeof(ripemd320->h));
+    ripemd320->blen = 0;
+
+    return ripemd320;
+}
+static void tchash_i_ripemd320_process_block(uint32_t h[2*5], const uint32_t M[16])
+{
+    uint32_t a1 = h[0], b1 = h[1], c1 = h[2], d1 = h[3], e1 = h[4];
+    uint32_t a2 = h[5], b2 = h[6], c2 = h[7], d2 = h[8], e2 = h[9];
+    uint32_t t;
+
+    int j;
+    for(j = 0; j < 5*16; j++)
+    {
+        t = tchash_i_rotl32(a1 + tchash_i_ripemd_f(       j    , b1, c1, d1) + M[tchash_i_ripemd_r1[j]] + tchash_i_ripemd160_K[0][j/16], tchash_i_ripemd_s1[j]) + e1;
+        a1 = e1; e1 = d1; d1 = tchash_i_rotl32(c1, 10); c1 = b1; b1 = t;
+
+        t = tchash_i_rotl32(a2 + tchash_i_ripemd_f(5*16 - j - 1, b2, c2, d2) + M[tchash_i_ripemd_r2[j]] + tchash_i_ripemd160_K[1][j/16], tchash_i_ripemd_s2[j]) + e2;
+        a2 = e2; e2 = d2; d2 = tchash_i_rotl32(c2, 10); c2 = b2; b2 = t;
+
+        switch(j)
+        {
+        case 1*16-1: SWAP_(uint32_t,b1,b2); break;
+        case 2*16-1: SWAP_(uint32_t,d1,d2); break;
+        case 3*16-1: SWAP_(uint32_t,a1,a2); break;
+        case 4*16-1: SWAP_(uint32_t,c1,c2); break;
+        case 5*16-1: SWAP_(uint32_t,e1,e2); break;
+        }
+    }
+    h[0] += a1; h[1] += b1; h[2] += c1; h[3] += d1; h[4] += e1;
+    h[5] += a2; h[6] += b2; h[7] += c2; h[8] += d2; h[9] += e2;
+}
+void tchash_ripemd320_process(TCHash_RIPEMD320* ripemd320, const void* data, size_t dlen)
+{
+    TCHASH_I_PROCESS_BODY_(ripemd320,RIPEMD320,le,32,{ripemd320->total += dlen;})
+}
+void* tchash_ripemd320_get(TCHash_RIPEMD320* ripemd320, void* digest)
+{
+    TCHASH_I_GET_BODY_(ripemd320,RIPEMD320,le,32,{M[14] = ripemd320->total << 3; M[15] = ripemd320->total >> 29;},sizeof(h)/sizeof(*h),sizeof(h))
+}
+void* tchash_ripemd320(void* digest, const void* data, size_t dlen) { TCHASH_I_SIMPLE_BODY_(ripemd320,RIPEMD320) }
+
+
 
 TCHash_SHA1* tchash_sha1_init(TCHash_SHA1* sha1)
 {
