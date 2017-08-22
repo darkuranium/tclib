@@ -389,7 +389,7 @@ char* get_field(char** ptr, const char* rkey)
     free(msg[0]);                                                              \
     free(text); )
 
-TEST(StringConv,(
+TEST(XStringConv,(
     static const unsigned char bytes[] = {0x01,0x23,0x45,0x67,0x89,0xAB,0xCD,0xEF};
 
     char sbuf[sizeof(bytes)*2+1];
@@ -399,6 +399,59 @@ TEST(StringConv,(
     tchash_bytes_from_xstring(bbuf, sbuf, sizeof(bytes)*2);
 
     ASSERT_MEMEQ(bytes,sizeof(bytes),bbuf,sizeof(bbuf));
+))
+
+TEST(Base64Conv,(
+    static const char* TestVectors[] = {
+        // Wikipedia
+        "M",    "TQ==",
+        "Ma",   "TWE=",
+        "Man",  "TWFu",
+        "any carnal pleasure.", "YW55IGNhcm5hbCBwbGVhc3VyZS4=",
+        "any carnal pleasure",  "YW55IGNhcm5hbCBwbGVhc3VyZQ==",
+        "any carnal pleasur",   "YW55IGNhcm5hbCBwbGVhc3Vy",
+        "any carnal pleasu",    "YW55IGNhcm5hbCBwbGVhc3U=",
+        "any carnal pleas",     "YW55IGNhcm5hbCBwbGVhcw==",
+        "pleasure.",    "cGxlYXN1cmUu",
+        "leasure.",     "bGVhc3VyZS4=",
+        "easure.",      "ZWFzdXJlLg==",
+        "asure.",       "YXN1cmUu",
+        "sure.",        "c3VyZS4=",
+        // RFC-4648
+        "",         "",
+        "f",        "Zg==",
+        "fo",       "Zm8=",
+        "foo",      "Zm9v",
+        "foob",     "Zm9vYg==",
+        "fooba",    "Zm9vYmE=",
+        "foobar",   "Zm9vYmFy",
+    };
+
+    unsigned char bytes[512];
+    char base64str[512];
+
+    size_t i;
+    for(i = 0; i < sizeof(TestVectors) / sizeof(*TestVectors); i += 2)
+    {
+        const char* data = TestVectors[i+0];
+        size_t dlen = strlen(data);
+        const char* expected = TestVectors[i+1];
+        size_t blen;
+
+        tchash_base64_from_bytes(base64str, data, dlen, -1, -1, -1);
+        //printf("%s == %s\n", base64str, expected);
+        ASSERT_STREQ(base64str, expected);
+        blen = tchash_bytes_from_base64(bytes, base64str, -1, -1, -1, -1);
+        ASSERT_MEMEQ(bytes, blen, data, dlen);
+
+        tchash_base64_from_bytes(base64str, data, dlen, '!', '.', '?');
+        blen = tchash_bytes_from_base64(bytes, base64str, -1, '!', '.', '?');
+        ASSERT_MEMEQ(bytes, blen, data, dlen);
+
+        tchash_base64_from_bytes(base64str, data, dlen, '~', ':', 0);
+        blen = tchash_bytes_from_base64(bytes, base64str, -1, '~', ':', 0);
+        ASSERT_MEMEQ(bytes, blen, data, dlen);
+    }
 ))
 
 // MD5
@@ -530,7 +583,8 @@ int main(void)
 {
     TESTS_BEGIN();
 
-    TEST_EXEC(StringConv);
+    TEST_EXEC(XStringConv);
+    TEST_EXEC(Base64Conv);
 
     TEST_EXEC(MD5);
 

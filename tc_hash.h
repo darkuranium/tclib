@@ -11,6 +11,7 @@
  * 0.0.3    changed `tchash_xstring_from_bytes()` to accept an `uppercase` parameter
  *          fixed a theoretical bug with uninitialized data in some cases (by sheer dumb luck, the bug did not affect any existing implementations)
  *          added Tiger and Tiger2 hashes (Tiger{,2}/{192,160,128})
+ *          added Base64 string conversion
  * 0.0.2    added "FIPS 202" algorithms (SHA3-{224,256,384,512}, SHAKE{128,256})
  * 0.0.1    initial public release (MD5, FIPS 180-4: SHA1 & SHA2-{224,256,384,512,512/224,512/256})
  *
@@ -270,6 +271,8 @@ extern "C" {
 int tchash_secure_eq(const void* a, const void* b, size_t len);
 size_t tchash_xstring_from_bytes(char* str, const void* data, size_t dlen, int uppercase);
 size_t tchash_bytes_from_xstring(void* data, const char* str, int slen);
+size_t tchash_base64_from_bytes(char* str, const void* data, size_t dlen, int c62, int c63, int cpad);
+size_t tchash_bytes_from_base64(void* data, const char* str, int slen, int c62, int c63, int cpad);
 
 
 #define TCHASH_MD5_BLOCK_SIZE       64
@@ -763,6 +766,139 @@ size_t tchash_bytes_from_xstring(void* data, const char* str, int slen)
     }
     return d;
 }
+#define TCHASH_I_BASE64_DEF62   '+'
+#define TCHASH_I_BASE64_DEF63   '/'
+#define TCHASH_I_BASE64_DEFPAD  '='
+
+static char tchash_i_to_base64char(unsigned char b, int c62, int c63)
+{
+    static const char BaseChars[62] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    return b == 63 ? c63 : b == 62 ? c62 : BaseChars[b];
+}
+static int tchash_i_from_base64char(unsigned char* padding, char b, int c62, int c63, int cpad)
+{
+    if(cpad && b == cpad)
+    {
+        ++*padding;
+        return 0;
+    }
+    if(*padding && b != cpad)
+        return -2; /* if we had padding, we need to still have it */
+    return 'A' <= b && b <= 'Z' ? b - 'A'
+         : 'a' <= b && b <= 'z' ? b - 'a' + 26
+         : '0' <= b && b <= '9' ? b - '0' + 26 * 2
+         : b == c62 ? 62
+         : b == c63 ? 63
+         : -1;
+}
+size_t tchash_base64_from_bytes(char* str, const void* data, size_t dlen, int c62, int c63, int cpad)
+{
+    if(c62 <= 0) c62 = TCHASH_I_BASE64_DEF62;
+    if(c63 <= 0) c63 = TCHASH_I_BASE64_DEF63;
+    if(cpad < 0) cpad = TCHASH_I_BASE64_DEFPAD;
+
+    const unsigned char* udata = TC__VOID_CAST(const unsigned char*,data);
+    char* ptr = str;
+
+    size_t i;
+    int j;
+    for(i = 0; i < dlen; i += 3)
+    {
+        unsigned char d[3];
+        if(i + 2 < dlen)
+        {
+            d[2] = udata[i+2];
+            d[1] = udata[i+1];
+        }
+        else if(i + 1 < dlen)
+        {
+            d[2] = 0;
+            d[1] = udata[i+1];
+        }
+        else
+            d[2] = d[1] = 0;
+        d[0] = udata[i+0];
+
+        unsigned char b[4];
+        b[0] = d[0] >> 2;
+        b[1] = ((d[0] << 4) & 0x3F) | (d[1] >> 4);
+        b[2] = ((d[1] << 2) & 0x3F) | (d[2] >> 6);
+        b[3] = d[2] & 63;
+
+        size_t rem = dlen - i;
+        for(j = 0; j < 4 - (3 - TCHASH_I_MIN(rem,3)); j++)
+            ptr[j] = tchash_i_to_base64char(b[j], c62, c63);
+        ptr += j;
+        if(cpad)
+        {
+            memset(ptr, cpad, 4 - j);
+            ptr += 4 - j;
+        }
+    }
+
+    *ptr = 0;
+    return ptr - str;
+}
+size_t tchash_bytes_from_base64(void* data, const char* str, int slen, int c62, int c63, int cpad)
+{
+    if(c62 <= 0) c62 = TCHASH_I_BASE64_DEF62;
+    if(c63 <= 0) c63 = TCHASH_I_BASE64_DEF63;
+    if(cpad < 0) cpad = TCHASH_I_BASE64_DEFPAD;
+    if(slen < 0) slen = strlen(str);
+
+    unsigned char* udata = TC__VOID_CAST(unsigned char*,data);
+    unsigned char* ptr = udata;
+
+    int i;
+    for(i = 0; i < slen; i += 4)
+    {
+        unsigned char padding = 0;
+
+        int v;
+        unsigned char b[4];
+        if((v = tchash_i_from_base64char(&padding, str[i+0], c62, c63, cpad)) < 0) return 0;
+        b[0] = v;
+        if(i + 1 < slen)
+        {
+            if((v = tchash_i_from_base64char(&padding, str[i+1], c62, c63, cpad)) < 0) return 0;
+            b[1] = v;
+            if(i + 2 < slen)
+            {
+                if((v = tchash_i_from_base64char(&padding, str[i+2], c62, c63, cpad)) < 0) return 0;
+                b[2] = v;
+                if(i + 3 < slen)
+                {
+                    if((v = tchash_i_from_base64char(&padding, str[i+3], c62, c63, cpad)) < 0) return 0;
+                    b[3] = v;
+                }
+                else
+                {
+                    if(!cpad) padding += 1;
+                    b[3] = 0;
+                }
+            }
+            else
+            {
+                if(!cpad) padding += 2;
+                b[2] = b[3] = 0;
+            }
+        }
+        else
+        {
+            if(!cpad) padding += 3;
+            b[1] = b[2] = b[3] = 0;
+        }
+
+        //if(padding == 4) continue;
+        if(padding == 3) return 0; /* it must be 1, 2, or 4 */
+        if(padding <= 2) *ptr++ = (b[0] << 2) | (b[1] >> 4);
+        if(padding <= 1) *ptr++ = (b[1] << 4) | (b[2] >> 2);
+        if(padding <= 0) *ptr++ = (b[2] << 6) | b[3];
+    }
+    return ptr - udata;
+}
+
+
 
 TCHash_MD5* tchash_md5_init(TCHash_MD5* md5)
 {
