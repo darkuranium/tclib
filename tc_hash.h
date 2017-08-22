@@ -64,10 +64,12 @@
  * stack, and thus there is nothing to deinitialize. Copying the state can thus
  * be done simply by assigning structs: `TCHash_MD5 md5copy = md5;`.
  *
- * The SHAKE128 and SHAKE256 algorithms are an exception here, since they have
- * variable-length digests. They take an additional parameter, the size of the
- * digest, in the `get()` function. For this reason, there is also no equivalent
- * `DIGEST_SIZE` constant;
+ * Some algorithms (such as SHAKE128 and SHAKE256) are an exception here, since
+ * they have variable-length digests. They take an additional parameter, the
+ * size of the digest, in the `get()` function. For this reason, there is also
+ * no equivalent `DIGEST_SIZE` constant. If such a constant *does* exist (such
+ * as for the Tiger and Tiger2 hashes), it signifies the *maximum* digest size
+ * for a specific algorithm.
  *
  *
  * Note that `tchash_md5_get(md5,digest)` does *not* modify the state of `md5`.
@@ -231,8 +233,8 @@
  * DESCRIPTION:
  *  Convert raw byte data into a hexadecimal string.
  *
- *  For example, this will convert the bytes `{0x0a,0x1b,0x2c}` into
- *  `"0a1b2c"`, including the terminating `\0` (so, 6+1 characters are written).
+ *  For example, this will convert the bytes `{0x0a,0x1b,0x2c}` into `"0a1b2c"`,
+ *  including the terminating `'\0'` (so, 6+1 characters are written).
  * SEE ALSO:
  *  - `tchash_bytes_from_xstring()`
  *
@@ -248,14 +250,63 @@
  * DESCRIPTION:
  *  Convert a hexadecimal string into raw byte data.
  *
- *  Both lowercase and uppercase hexadecimal characters are supported; any space
- *  is ignored in the input. If the input is errorneous, the function will
- *  return `0` and abort conversion.
+ *  Both lowercase and uppercase hexadecimal characters are supported;
+ *  whitespace is ignored in the input. If the input is errorneous, the function
+ *  will return `0` and abort conversion.
  *
- *  For example, this will convert the string "0a1 b 2c" into the raw bytes
+ *  For example, this will convert the string `"0a1 b 2c"` into the raw bytes
  *  `{0x0a,0x1b,0x2c}`.
  * SEE ALSO:
  *  - `tchash_xstring_from_bytes()`
+ *
+ *
+ * SYNOPSIS:
+ *  size_t tchash_base64_from_bytes(char* str, const void* data, size_t dlen, int c62, int c63, int cpad);
+ * PARAMETERS:
+ *  - str: buffer of length at least `dlen * 4 + 1` bytes
+ *  - data: data to convert
+ *  - dlen: length of data in bytes
+ *  - c62,c63: character to use for the values `62` and `63`, respectively, or
+ *             `-1` to use the defaults ('+' and '/')
+ *  - cpad: character to use for the padding, `-1` to use the default ('='), or
+ *          `0` to disable
+ * RETURN VALUE:
+ *  Number of characters in the result string, exclusing the terminating `\0`.
+ * DESCRIPTION:
+ *  Convert raw byte data into a Base64 string.
+ *
+ *  For example, this will convert the bytes `{0x4d,0x61}` into `"TWQ="`,
+ *  including the terminating `'\0'` (so, 4+1 characters are written).
+ *
+ *  The character set is as follows (in order for values from 0 to 63; the
+ *  padding character is '='):
+ *  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/", where
+ *  the last two characters are customizable.
+ * SEE ALSO:
+ *  - `tchash_bytes_from_base64()`
+ *
+ *
+ * SYNOPSIS:
+ *  size_t tchash_bytes_from_base64(void* data, const char* str, int slen, int c62, int c63, int cpad);
+ * PARAMETERS:
+ *  - data: buffer of length at least `str_length * 3 / 4` bytes
+ *  - str: string to convert
+ *  - slen: length of string, or `-1` if it is NUL-terminated
+ *  - c62,c63: character to use for the values `62` and `63`, respectively, or
+ *             `-1` to use the defaults ('+' and '/')
+ *  - cpad: character to use for the padding, `-1` to use the default ('='), or
+ *          `0` to disable
+ * RETURN VALUE:
+ *  Number of bytes in the resulting data, or `0` on error.
+ * DESCRIPTION:
+ *  Convert a Base64 string into raw byte data.
+ *
+ *  If the input is errorneous, the function will return `0` and abort
+ *  conversion.
+ *
+ *  For example, this will convert the string `"TWQ="` into bytes `{0x4d,0x61}`.
+ * SEE ALSO:
+ *  - `tchash_base64_from_bytes()`
  */
 
 #ifndef TC_HASH_H_
