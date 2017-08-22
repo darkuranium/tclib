@@ -8,7 +8,7 @@
 
 #define RBUF_SIZE   65536
 
-#define HASH_FILE(LHASH,UHASH,FNAME)                                           \
+#define HASH_FILE_S(LHASH,SHASH,UHASH,FNAME)                                   \
     do {                                                                       \
         const char* fname_ = (FNAME);                                          \
         FILE* file = fopen(fname_, "rb");                                      \
@@ -17,7 +17,7 @@
         char digest[TCHASH_##UHASH##_DIGEST_SIZE];                             \
         char tdigest[2*sizeof(digest)+1];                                      \
                                                                                \
-        TCHash_##UHASH LHASH;                                                  \
+        TCHash_##SHASH LHASH;                                                  \
         tchash_##LHASH##_init(&LHASH);                                         \
         size_t rlen;                                                           \
         do                                                                     \
@@ -30,7 +30,8 @@
         tchash_xstring_from_bytes(tdigest, digest, sizeof(digest), 0);         \
         printf("%s\t*%s\n", tdigest, fname_);                                  \
     } while(0)
-#define HASH_FILE_DLEN(LHASH,UHASH,FNAME,DLEN)                                 \
+#define HASH_FILE(LHASH,UHASH,FNAME)    HASH_FILE_S(LHASH,UHASH,UHASH,FNAME)
+#define HASH_FILE_S_DLEN(LHASH,SHASH,UHASH,FNAME,DLEN)                         \
     do {                                                                       \
         const char* fname_ = (FNAME);                                          \
         FILE* file = fopen(fname_, "rb");                                      \
@@ -39,7 +40,7 @@
         char* digest = malloc((DLEN));                                         \
         char* tdigest = malloc(2*(DLEN)+1);                                    \
                                                                                \
-        TCHash_##UHASH LHASH;                                                  \
+        TCHash_##SHASH LHASH;                                                  \
         tchash_##LHASH##_init(&LHASH);                                         \
         size_t rlen;                                                           \
         do                                                                     \
@@ -52,12 +53,16 @@
         tchash_xstring_from_bytes(tdigest, digest, (DLEN), 0);                 \
         printf("%s\t*%s\n", tdigest, fname_);                                  \
     } while(0)
+#define HASH_FILE_DLEN(LHASH,UHASH,FNAME,DLEN)  HASH_FILE_S_DLEN(LHASH,UHASH,UHASH,FNAME,DLEN)
 
 void usage(FILE* file, int ecode)
 {
     fprintf(file, "Usage: tchash -<alg> <files>...\n");
     fprintf(file, "\tSupported algorithms:\n");
     fprintf(file, "\t\tMD5\n");
+    fprintf(file, "\t\tTiger/{192,160,128}\n");
+    fprintf(file, "\t\tTiger2/{192,160,128}\n");
+    fprintf(file, "\t\tRIPEMD-{128,160,256,320}\n");
     fprintf(file, "\t\tSHA1\n");
     fprintf(file, "\t\tSHA2-{224,256,384,512,512/224,512/256}\n");
     fprintf(file, "\t\tSHA3-{224,256,384,512}\n");
@@ -103,6 +108,16 @@ int main(int argc, char** argv)
     {
         if(0) {}
         else if(!strcmp(alg, "md5")) HASH_FILE(md5,MD5,argv[i]);
+        else if(!strcmp(alg, "tiger") || !strcmp(alg, "tiger/192") || !strcmp(alg, "tiger-192")) HASH_FILE_S(tiger192,Tiger192,TIGER192,argv[i]);
+        else if(!strcmp(alg, "tiger/160") || !strcmp(alg, "tiger-160")) HASH_FILE_S(tiger160,Tiger160,TIGER160,argv[i]);
+        else if(!strcmp(alg, "tiger/128") || !strcmp(alg, "tiger-128")) HASH_FILE_S(tiger128,Tiger128,TIGER128,argv[i]);
+        else if(!strcmp(alg, "tiger2") || !strcmp(alg, "tiger2/192") || !strcmp(alg, "tiger2-192")) HASH_FILE_S(tiger2_192,Tiger2_192,TIGER2_192,argv[i]);
+        else if(!strcmp(alg, "tiger2/160") || !strcmp(alg, "tiger2-160")) HASH_FILE_S(tiger2_160,Tiger2_160,TIGER2_160,argv[i]);
+        else if(!strcmp(alg, "tiger2/128") || !strcmp(alg, "tiger2-128")) HASH_FILE_S(tiger2_128,Tiger2_128,TIGER2_128,argv[i]);
+        else if(!strcmp(alg, "ripemd-128") || !strcmp(alg, "ripemd128")) HASH_FILE(ripemd128,RIPEMD128,argv[i]);
+        else if(!strcmp(alg, "ripemd-160") || !strcmp(alg, "ripemd160")) HASH_FILE(ripemd160,RIPEMD160,argv[i]);
+        else if(!strcmp(alg, "ripemd-256") || !strcmp(alg, "ripemd256")) HASH_FILE(ripemd256,RIPEMD256,argv[i]);
+        else if(!strcmp(alg, "ripemd-320") || !strcmp(alg, "ripemd320")) HASH_FILE(ripemd320,RIPEMD320,argv[i]);
         else if(!strcmp(alg, "sha1")) HASH_FILE(sha1,SHA1,argv[i]);
         else if(!strcmp(alg, "sha2-224") || !strcmp(alg, "sha224")) HASH_FILE(sha2_224,SHA2_224,argv[i]);
         else if(!strcmp(alg, "sha2-256") || !strcmp(alg, "sha256")) HASH_FILE(sha2_256,SHA2_256,argv[i]);
