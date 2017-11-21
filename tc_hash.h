@@ -17,8 +17,7 @@
  * 0.0.1    initial public release (MD5, FIPS 180-4: SHA1 & SHA2-{224,256,384,512,512/224,512/256})
  *
  * TODOs:
- * - Tiger/{128,160,192}, Tiger2/{128,160,192}
- * - RIPEMD-{128,160,256,320}
+ * - BLAKE, BLAKE2 (as an alternative to SHA3 with [hopefully: testing required!] better performenace)
  * - optimizations
  * - HMAC [FIPS 198-1]
  * - CRC-* (not cryptographic, but useful; most likely as a separate `tc_checksum`, though)
