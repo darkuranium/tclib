@@ -1,5 +1,5 @@
 /*
- * tc_texture_codex.h: Hardware texture compression (de)compressor.
+ * tc_texture_codec.h: Hardware texture compression (de)compressor.
  *
  * DEPENDS:
  * VERSION: 0.0.1 (2018-01-14)
