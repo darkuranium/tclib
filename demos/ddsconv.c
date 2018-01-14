@@ -186,8 +186,8 @@ int main(int argc, char** argv)
         return 1;
     }
     // this is enough space for the entire thing!
-    void* obufA = malloc(tex.size.x * tex.size.y * tex.size.z * 4 * sizeof(uint32_t));
-    void* obufB = malloc(tex.size.x * tex.size.y * tex.size.z * 4 * sizeof(float));
+    void* obufA = malloc(MAX(tex.size.x * tex.size.y * tex.size.z,16) * 4 * sizeof(uint32_t));
+    void* obufB = malloc(MAX(tex.size.x * tex.size.y * tex.size.z,16) * 4 * sizeof(float));
     uint8_t* obuf8 = obufA;
     uint16_t* obuf16 = obufA;
     float* obuff = obufB;
