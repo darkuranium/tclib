@@ -774,7 +774,7 @@ uint32_t tcrand_next_uniform_u32(TC_RandGen* rgen, uint32_t min, uint32_t max)
         tcrand_next_bytes(rgen, &num, sizeof(num));
         return min + num;
     }
-    uint32_t mask = tcrand_i_next_pow2_u32(max) - 1U;
+    uint32_t mask = tcrand_i_next_pow2_u32(max + 1U) - 1U;
     do
     {
         tcrand_next_bytes(rgen, &num, sizeof(num));
@@ -792,7 +792,7 @@ uint64_t tcrand_next_uniform_u64(TC_RandGen* rgen, uint64_t min, uint64_t max)
         tcrand_next_bytes(rgen, &num, sizeof(num));
         return min + num;
     }
-    uint64_t mask = tcrand_i_next_pow2_u64(max) - 1U;
+    uint64_t mask = tcrand_i_next_pow2_u64(max + 1U) - 1U;
     do
     {
         tcrand_next_bytes(rgen, &num, sizeof(num));
