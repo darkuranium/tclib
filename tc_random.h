@@ -2,12 +2,14 @@
  * tc_random.h: Random number generation.
  *
  * DEPENDS:
- * VERSION: 0.0.1 (2017-08-07)
+ * VERSION: 0.0.2 (2018-03-28)
  * LICENSE: CC0 & Boost (dual-licensed)
  * AUTHOR: Tim Cas
  * URL: https://github.com/darkuranium/tclib
  *
  * VERSION HISTORY:
+ * 0.0.2    fixed a bug in generating u32 and u64 integers
+ *          (`max` was not being included in the possible results)
  * 0.0.1    initial public release
  *
  * TODOs:
