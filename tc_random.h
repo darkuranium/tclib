@@ -2,12 +2,13 @@
  * tc_random.h: Random number generation.
  *
  * DEPENDS:
- * VERSION: 0.0.2 (2018-03-28)
+ * VERSION: 0.0.3 (2018-03-28)
  * LICENSE: CC0 & Boost (dual-licensed)
  * AUTHOR: Tim Cas
  * URL: https://github.com/darkuranium/tclib
  *
  * VERSION HISTORY:
+ * 0.0.3    fixed a bug where mean & sd were swapped for normal2_{d,f}
  * 0.0.2    fixed a bug in generating u32 and u64 integers
  *          (`max` was not being included in the possible results)
  * 0.0.1    initial public release
@@ -854,25 +855,25 @@ TC_CFloat tcrand_next_normal2_f(TC_RandGen* rgen, float mean, float sd)
     float u1 = tcrand_next_uniform_f_oc(rgen, 0.0f, 1.0f);
     float u2 = tcrand_next_uniform_f_oc(rgen, 0.0f, 1.0f);
 
-    float sqrtMmean = mean * sqrtf(-2.0f * logf(u1));
+    float sqrtMsd = sd * sqrtf(-2.0f * logf(u1));
     float A = TwoPI * u2;
     TC_CFloat ret;
-    ret.re = sqrtMmean * cosf(A) + sd;
-    ret.im = sqrtMmean * sinf(A) + sd;
+    ret.re = sqrtMsd * cosf(A) + mean;
+    ret.im = sqrtMsd * sinf(A) + mean;
     return ret;
 }
 TC_CDouble tcrand_next_normal2_d(TC_RandGen* rgen, double mean, double sd)
 {
     static const double TwoPI = 6.28318530717958647692528676655900576839433879875021164195;
 
-    double u1 = tcrand_next_uniform_d_oc(rgen, 0.0f, 1.0);
-    double u2 = tcrand_next_uniform_d_oc(rgen, 0.0f, 1.0);
+    double u1 = tcrand_next_uniform_d_oc(rgen, 0.0, 1.0);
+    double u2 = tcrand_next_uniform_d_oc(rgen, 0.0, 1.0);
 
-    double sqrtMmean = mean * sqrt(-2.0 * log(u1));
+    double sqrtMsd = sd * sqrt(-2.0 * log(u1));
     double A = TwoPI * u2;
     TC_CDouble ret;
-    ret.re = sqrtMmean * cos(A) + sd;
-    ret.im = sqrtMmean * sin(A) + sd;
+    ret.re = sqrtMsd * cos(A) + mean;
+    ret.im = sqrtMsd * sin(A) + mean;
     return ret;
 }
 
