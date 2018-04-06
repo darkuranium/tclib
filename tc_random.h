@@ -21,6 +21,7 @@
 #ifndef TC_RANDOM_H_
 #define TC_RANDOM_H_
 
+#include <stddef.h>
 #include <stdint.h>
 #include <limits.h>
 
