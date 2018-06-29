@@ -166,6 +166,7 @@ uint8_t tctex_util_srgb_from_linear(float linear);
 
 #ifdef TC_TEXTURE_CODEC_IMPLEMENTATION
 
+#include <limits.h>
 #include <math.h>
 
 #ifndef TCTEX__FROM_LE16
