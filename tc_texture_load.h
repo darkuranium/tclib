@@ -2,12 +2,13 @@
  * tc_texture_load.h: Texture image format loading.
  *
  * DEPENDS:
- * VERSION: 0.0.1 (2018-01-14)
+ * VERSION: 0.0.2 (2018-06-30)
  * LICENSE: CC0 & Boost (dual-licensed)
  * AUTHOR: Tim Cas
  * URL: https://github.com/darkuranium/tclib
  *
  * VERSION HISTORY:
+ * 0.0.2    fixed a crash when image height is set to 0 (thanks, American Fuzzy Lop!)
  * 0.0.1    initial public release (DDS files only)
  *
  * TODOs:
@@ -877,7 +878,7 @@ static TCTex_Texture* tctex_i_dds_load(TCTex_Texture* tex, const uint8_t* udata,
         break;
     case TCTEX_DDSD_LINEARSIZE:
         tex->nbytes = TCTEX__FROM_LE32(header->dwPitchOrLinearSize);
-        tex->pitch.y = tex->nbytes / tex->size.y;//TODO: verify
+        tex->pitch.y = tex->size.y ? tex->nbytes / tex->size.y : 0;//TODO: verify
         tex->pitch.z = tex->nbytes;
         tex->nbytes *= tex->size.z;
         break;
