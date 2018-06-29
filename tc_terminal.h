@@ -333,12 +333,12 @@ int tcterm_set_attr(int attr)
 #else /* POSIX */
     if(!tcterm__ctx.hascol) return 2;
     int ok = 1;
-    ok &= tcterm_print("\033[0") > 0;
+    ok &= tcterm_print("\033[0", -1) > 0;
     if(!(attr & TCTERM_FG_DEFAULT))
         ok &= tcterm_printf(";%d", (attr & TCTERM_FG_INTENSE) ? 90 : 30) > 0;
     if(!(attr & TCTERM_BG_DEFAULT))
         ok &= tcterm_printf(";%d", (attr & TCTERM_BG_INTENSE) ? 100 : 40) > 0;
-    ok &= tcterm_print("m");
+    ok &= tcterm_print("m", -1);
     return ok;
 #endif
 }
