@@ -693,7 +693,9 @@ static uint64_t tchash_i_bswap64(uint64_t x)
     return ((uint64_t)tchash_i_bswap32(x) << 32) | tchash_i_bswap32(x >> 32);
 }
 
-#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+#ifndef __BYTE_ORDER__
+#error "Unknown byte order"
+#elif __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
 #define TCHASH_I_FROM_LE16(x)   ((uint16_t)(x))
 #define TCHASH_I_FROM_LE32(x)   ((uint32_t)(x))
 #define TCHASH_I_FROM_LE64(x)   ((uint64_t)(x))
