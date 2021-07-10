@@ -2,21 +2,20 @@
  * tc_thread.h: Cross-platform threading & atomics.
  *
  * DEPENDS:
- * VERSION: 0.1.0 (2021-07-04)
+ * VERSION: 0.2.0 (2021-07-10)
  * LICENSE: CC0 & Boost (dual-licensed)
  * AUTHOR: Tim Cas
  * URL: https://github.com/darkuranium/tclib
  *
  * VERSION HISTORY:
+ * 0.2.0    implemented semaphores & RW locks
  * 0.1.0    initial public release
  *
  * TODOs:
- * - document atomics
+ * - document semaphores, RW locks, and atomics
  * - tcthread_atexit; maybe tcthread_cancel (+ destructors)?
  * - initializers (if possible)
  * - spinlocks
- * - RW locks
- * - semaphores
  * - high-level threading: threadpool + job system
  *
  *
@@ -365,6 +364,8 @@ extern "C" {
 typedef struct tcthread { uintptr_t handle; } tcthread_t;
 typedef struct tcthread_mutex { uintptr_t handle; } tcthread_mutex_t;
 typedef struct tcthread_cond { uintptr_t handle; } tcthread_cond_t;
+typedef struct tcthread_sem { uintptr_t handle; } tcthread_sem_t;
+typedef struct tcthread_rwlock { uintptr_t handle; } tcthread_rwlock_t;
 
 // Util
 // Number of logical processor cores. May be higher than physical. Returns 0 if fetching failed.
@@ -401,6 +402,26 @@ void tcthread_cond_wait(tcthread_cond_t cond, tcthread_mutex_t mutex);
 bool tcthread_cond_timed_wait(tcthread_cond_t cond, tcthread_mutex_t mutex, uint32_t timeout_ms);
 void tcthread_cond_signal(tcthread_cond_t cond);
 void tcthread_cond_broadcast(tcthread_cond_t cond);
+
+// Semaphore
+tcthread_sem_t tcthread_sem_create(uint32_t initial_value);
+inline bool tcthread_sem_is_valid(tcthread_sem_t sem) { return sem.handle; }
+void tcthread_sem_destroy(tcthread_sem_t sem);
+void tcthread_sem_post(tcthread_sem_t sem);
+void tcthread_sem_wait(tcthread_sem_t sem);
+bool tcthread_sem_try_wait(tcthread_sem_t sem);
+bool tcthread_sem_timed_wait(tcthread_sem_t sem, uint32_t timeout_ms);
+
+// RWLock
+tcthread_rwlock_t tcthread_rwlock_create(void);
+inline bool tcthread_rwlock_is_valid(tcthread_rwlock_t rwlock) { return rwlock.handle; }
+void tcthread_rwlock_destroy(tcthread_rwlock_t rwlock);
+void tcthread_rwlock_lock_rd(tcthread_rwlock_t rwlock);
+bool tcthread_rwlock_try_lock_rd(tcthread_rwlock_t rwlock);
+void tcthread_rwlock_unlock_rd(tcthread_rwlock_t rwlock);
+void tcthread_rwlock_lock_wr(tcthread_rwlock_t rwlock);
+bool tcthread_rwlock_try_lock_wr(tcthread_rwlock_t rwlock);
+void tcthread_rwlock_unlock_wr(tcthread_rwlock_t rwlock);
 
 // ********** ATOMICS **********
 typedef uint32_t tcthread_atomic32_t;
@@ -1398,6 +1419,7 @@ union winapi_GetActiveProcessorCount_conv
 
 #include <sys/types.h>
 #include <pthread.h>
+#include <semaphore.h>
 #include <time.h>
 #include <errno.h>
 static pthread_once_t tcthread_init_once_ = PTHREAD_ONCE_INIT;
@@ -1935,6 +1957,260 @@ void tcthread_cond_broadcast(tcthread_cond_t cond)
         TC_ASSERT(false, "pthread_cond_broadcast failed (probably invalid parameter)");
 #else
     #pragma message ("Warning: tcthread_cond_broadcast uninplemented on platform")
+#endif
+}
+
+
+// Semaphore
+tcthread_sem_t tcthread_sem_create(uint32_t initial_value)
+{
+    TC_ASSERT(initial_value <= INT32_MAX, "initial_value for tcthread_sem_create must be <= INT32_MAX");
+#if defined(TCTHREAD__PLATFORM_WINDOWS)
+    tcthread_sem_t sem = {0};
+    sem.handle = TC__REINTERPRET_CAST(uintptr_t, CreateSemaphoreW(NULL, initial_value, LONG_MAX, NULL));
+    return sem;
+#elif defined(TCTHREAD__PLATFORM_POSIX)
+    tcthread_sem_t sem = {0};
+    sem_t* psem = TC__VOID_CAST(sem_t*, malloc(sizeof(sem_t)));
+    if(sem_init(psem, 0, initial_value))    // error
+    {
+        TC_FREE(psem);
+        return sem;
+    }
+    sem.handle = TC__REINTERPRET_CAST(uintptr_t, psem);
+    return sem;
+#else
+    #pragma message ("Warning: tcthread_sem_create uninplemented on platform")
+#endif
+}
+bool tcthread_sem_is_valid(tcthread_sem_t sem);
+void tcthread_sem_destroy(tcthread_sem_t sem)
+{
+    if(!sem.handle) return; // _destroy silently allows null handles
+#if defined(TCTHREAD__PLATFORM_WINDOWS)
+    HANDLE handle = TC__REINTERPRET_CAST(HANDLE, sem.handle);
+    if(!CloseHandle(handle))
+        TC_ASSERT(false, "CloseHandle failed");
+#elif defined(TCTHREAD__PLATFORM_POSIX)
+    sem_t* psem = TC__REINTERPRET_CAST(sem_t*, sem.handle);
+    if(sem_destroy(psem))
+        TC_ASSERT(false, "sem_destroy failed (probably invalid parameter)");
+    TC_FREE(psem);
+#else
+    #pragma message ("Warning: tcthread_sem_destroy uninplemented on platform")
+#endif
+}
+void tcthread_sem_post(tcthread_sem_t sem)
+{
+#if defined(TCTHREAD__PLATFORM_WINDOWS)
+    HANDLE handle = TC__REINTERPRET_CAST(HANDLE, sem.handle);
+    if(!ReleaseSemaphore(handle, 1, NULL))
+        TC_ASSERT(false, "ReleaseSemaphore failed");
+#elif defined(TCTHREAD__PLATFORM_POSIX)
+    sem_t* psem = TC__REINTERPRET_CAST(sem_t*, sem.handle);
+    if(sem_post(psem))
+        TC_ASSERT(false, "sem_post failed (probably invalid parameter)");
+#else
+    #pragma message ("Warning: tcthread_sem_post uninplemented on platform")
+#endif
+}
+void tcthread_sem_wait(tcthread_sem_t sem)
+{
+#if defined(TCTHREAD__PLATFORM_WINDOWS)
+    HANDLE handle = TC__REINTERPRET_CAST(HANDLE, sem.handle);
+    if(WaitForSingleObject(handle, INFINITE))
+        TC_ASSERT(false, "WaitForSingleObject failed");
+#elif defined(TCTHREAD__PLATFORM_POSIX)
+    sem_t* psem = TC__REINTERPRET_CAST(sem_t*, sem.handle);
+    if(sem_wait(psem))
+        TC_ASSERT(false, "sem_wait failed");
+#else
+    #pragma message ("Warning: tcthread_sem_wait uninplemented on platform")
+#endif
+}
+bool tcthread_sem_try_wait(tcthread_sem_t sem)
+{
+#if defined(TCTHREAD__PLATFORM_WINDOWS)
+    HANDLE handle = TC__REINTERPRET_CAST(HANDLE, sem.handle);
+    DWORD ret = WaitForSingleObject(handle, 0);
+    if(ret)
+    {
+        TC_ASSERT(ret == WAIT_TIMEOUT, "WaitForSingleObject failed");
+        return false;   // waiting failed
+    }
+    return true;
+#elif defined(TCTHREAD__PLATFORM_POSIX)
+    sem_t* psem = TC__REINTERPRET_CAST(sem_t*, sem.handle);
+    int ret = sem_trywait(psem);
+    if(ret)
+    {
+        TC_ASSERT(errno == EAGAIN, "sem_trywait failed");
+        return false;   // waiting failed
+    }
+    return true;
+#else
+    #pragma message ("Warning: tcthread_sem_try_wait uninplemented on platform")
+#endif
+}
+bool tcthread_sem_timed_wait(tcthread_sem_t sem, uint32_t timeout_ms)
+{
+#if defined(TCTHREAD__PLATFORM_WINDOWS)
+    HANDLE handle = TC__REINTERPRET_CAST(HANDLE, sem.handle);
+    DWORD ret = WaitForSingleObject(handle, timeout_ms);
+    if(ret)
+    {
+        TC_ASSERT(ret == WAIT_TIMEOUT, "WaitForSingleObject failed");
+        return false;   // timed out
+    }
+    return true;
+#elif defined(TCTHREAD__PLATFORM_POSIX)
+    sem_t* psem = TC__REINTERPRET_CAST(sem_t*, sem.handle);
+    struct timespec ts = tcthread_timespec_from_ms_(timeout_ms);
+    int ret = sem_timedwait(psem, &ts);
+    if(ret)
+    {
+        TC_ASSERT(errno == ETIMEDOUT, "sem_timedwait failed");
+        return false;   // timed out
+    }
+    return true;
+#else
+    #pragma message ("Warning: tcthread_sem_timed_wait uninplemented on platform")
+#endif
+}
+
+
+// RWLock
+tcthread_rwlock_t tcthread_rwlock_create(void)
+{
+#if defined(TCTHREAD__PLATFORM_WINDOWS)
+    tcthread_rwlock_t rwlock = {0};
+    SRWLOCK* srw = TC__VOID_CAST(SRWLOCK*, malloc(sizeof(SRWLOCK)));
+    InitializeSRWLock(srw);
+    rwlock.handle = TC__REINTERPRET_CAST(uintptr_t, srw);
+    return rwlock;
+#elif defined(TCTHREAD__PLATFORM_POSIX)
+    tcthread_rwlock_t rwlock = {0};
+    pthread_rwlock_t* prwlock = TC__VOID_CAST(pthread_rwlock_t*, malloc(sizeof(pthread_rwlock_t)));
+    if(pthread_rwlock_init(prwlock, NULL))  // error
+    {
+        TC_FREE(prwlock);
+        return rwlock;
+    }
+    rwlock.handle = TC__REINTERPRET_CAST(uintptr_t, prwlock);
+    return rwlock;
+#else
+    #pragma message ("Warning: tcthread_rwlock_create uninplemented on platform")
+#endif
+}
+bool tcthread_rwlock_is_valid(tcthread_rwlock_t rwlock);
+void tcthread_rwlock_destroy(tcthread_rwlock_t rwlock)
+{
+    if(!rwlock.handle) return;  // _destroy silently allows null handles
+#if defined(TCTHREAD__PLATFORM_WINDOWS)
+    SRWLOCK* srw = TC__REINTERPRET_CAST(SRWLOCK*, rwlock.handle);
+    // WinAPI itself needs no freeing
+    TC_FREE(srw);
+#elif defined(TCTHREAD__PLATFORM_POSIX)
+    pthread_rwlock_t* prwlock = TC__REINTERPRET_CAST(pthread_rwlock_t*, rwlock.handle);
+    if(pthread_rwlock_destroy(prwlock))
+        TC_ASSERT(false, "pthread_rwlock_destroy failed");
+    TC_FREE(prwlock);
+#else
+    #pragma message ("Warning: tcthread_rwlock_destroy uninplemented on platform")
+#endif
+}
+void tcthread_rwlock_lock_rd(tcthread_rwlock_t rwlock)
+{
+    TC_ASSERT(rwlock.handle, "tcthread_rwlock_lock_rd passed null `rwlock` parameter");
+#if defined(TCTHREAD__PLATFORM_WINDOWS)
+    SRWLOCK* srw = TC__REINTERPRET_CAST(SRWLOCK*, rwlock.handle);
+    AcquireSRWLockShared(srw);
+#elif defined(TCTHREAD__PLATFORM_POSIX)
+    pthread_rwlock_t* prwlock = TC__REINTERPRET_CAST(pthread_rwlock_t*, rwlock.handle);
+    if(pthread_rwlock_rdlock(prwlock))  // TODO: handle EAGAIN?
+        TC_ASSERT(false, "pthread_rwlock_rdlock failed");
+#else
+    #pragma message ("Warning: tcthread_rwlock_lock_rd uninplemented on platform")
+#endif
+}
+bool tcthread_rwlock_try_lock_rd(tcthread_rwlock_t rwlock)
+{
+    TC_ASSERT(rwlock.handle, "tcthread_rwlock_try_lock_rd passed null `rwlock` parameter");
+#if defined(TCTHREAD__PLATFORM_WINDOWS)
+    SRWLOCK* srw = TC__REINTERPRET_CAST(SRWLOCK*, rwlock.handle);
+    return TryAcquireSRWLockShared(srw);
+#elif defined(TCTHREAD__PLATFORM_POSIX)
+    pthread_rwlock_t* prwlock = TC__REINTERPRET_CAST(pthread_rwlock_t*, rwlock.handle);
+    int ret = pthread_rwlock_tryrdlock(prwlock);
+    if(ret)
+    {
+        TC_ASSERT(ret == EBUSY, "pthread_rwlock_tryrdlock failed");
+        return false;   // locking failed
+    }
+    return true;
+#else
+    #pragma message ("Warning: tcthread_rwlock_try_lock_rd uninplemented on platform")
+#endif
+}
+void tcthread_rwlock_unlock_rd(tcthread_rwlock_t rwlock)
+{
+    TC_ASSERT(rwlock.handle, "tcthread_rwlock_unlock_rd passed null `rwlock` parameter");
+#if defined(TCTHREAD__PLATFORM_WINDOWS)
+    SRWLOCK* srw = TC__REINTERPRET_CAST(SRWLOCK*, rwlock.handle);
+    ReleaseSRWLockShared(srw);
+#elif defined(TCTHREAD__PLATFORM_POSIX)
+    pthread_rwlock_t* prwlock = TC__REINTERPRET_CAST(pthread_rwlock_t*, rwlock.handle);
+    if(pthread_rwlock_unlock(prwlock))
+        TC_ASSERT(false, "pthread_rwlock_unlock failed");
+#else
+    #pragma message ("Warning: tcthread_rwlock_unlock_rd uninplemented on platform")
+#endif
+}
+void tcthread_rwlock_lock_wr(tcthread_rwlock_t rwlock)
+{
+    TC_ASSERT(rwlock.handle, "tcthread_rwlock_lock_wr passed null `rwlock` parameter");
+#if defined(TCTHREAD__PLATFORM_WINDOWS)
+    SRWLOCK* srw = TC__REINTERPRET_CAST(SRWLOCK*, rwlock.handle);
+    AcquireSRWLockExclusive(srw);
+#elif defined(TCTHREAD__PLATFORM_POSIX)
+    pthread_rwlock_t* prwlock = TC__REINTERPRET_CAST(pthread_rwlock_t*, rwlock.handle);
+    if(pthread_rwlock_wrlock(prwlock))  // TODO: handle EAGAIN?
+        TC_ASSERT(false, "pthread_rwlock_wrlock failed");
+#else
+    #pragma message ("Warning: tcthread_rwlock_lock_rd uninplemented on platform")
+#endif
+}
+bool tcthread_rwlock_try_lock_wr(tcthread_rwlock_t rwlock)
+{
+    TC_ASSERT(rwlock.handle, "tcthread_rwlock_try_lock_wr passed null `rwlock` parameter");
+#if defined(TCTHREAD__PLATFORM_WINDOWS)
+    SRWLOCK* srw = TC__REINTERPRET_CAST(SRWLOCK*, rwlock.handle);
+    return TryAcquireSRWLockExclusive(srw);
+#elif defined(TCTHREAD__PLATFORM_POSIX)
+    pthread_rwlock_t* prwlock = TC__REINTERPRET_CAST(pthread_rwlock_t*, rwlock.handle);
+    int ret = pthread_rwlock_trywrlock(prwlock);
+    if(ret)
+    {
+        TC_ASSERT(ret == EBUSY, "pthread_rwlock_trywrlock failed");
+        return false;   // locking failed
+    }
+    return true;
+#else
+    #pragma message ("Warning: tcthread_rwlock_try_lock_rd uninplemented on platform")
+#endif
+}
+void tcthread_rwlock_unlock_wr(tcthread_rwlock_t rwlock)
+{
+    TC_ASSERT(rwlock.handle, "tcthread_rwlock_unlock_wr passed null `rwlock` parameter");
+#if defined(TCTHREAD__PLATFORM_WINDOWS)
+    SRWLOCK* srw = TC__REINTERPRET_CAST(SRWLOCK*, rwlock.handle);
+    ReleaseSRWLockExclusive(srw);
+#elif defined(TCTHREAD__PLATFORM_POSIX)
+    pthread_rwlock_t* prwlock = TC__REINTERPRET_CAST(pthread_rwlock_t*, rwlock.handle);
+    if(pthread_rwlock_unlock(prwlock))
+        TC_ASSERT(false, "pthread_rwlock_unlock failed");
+#else
+    #pragma message ("Warning: tcthread_rwlock_unlock_rd uninplemented on platform")
 #endif
 }
 
