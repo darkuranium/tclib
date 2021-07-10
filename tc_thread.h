@@ -327,7 +327,7 @@
  *  context-switching between threads.
  *
  * SEE ALSO:
- *  - `tcthread_cond_wait` & `tcthread_cond_try_wait` to wait on a condition variable (the opposite operation)
+ *  - `tcthread_cond_wait` & `tcthread_cond_timed_wait` to wait on a condition variable (the opposite operation)
  */
 
 #ifndef TC_THREAD_H_
