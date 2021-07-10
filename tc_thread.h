@@ -426,6 +426,7 @@ bool tcthread_rwlock_try_lock_wr(tcthread_rwlock_t rwlock);
 void tcthread_rwlock_unlock_wr(tcthread_rwlock_t rwlock);
 
 // ********** ATOMICS **********
+typedef uint8_t tcthread_atomicbool_t;  // uses the smallest available atomic type
 typedef uint32_t tcthread_atomic32_t;
 typedef uintptr_t tcthread_atomicsz_t;
 typedef void* tcthread_atomicptr_t;
@@ -437,6 +438,14 @@ typedef void* tcthread_atomicptr_t;
 #define TCTHREAD_MEMORDER_RELEASE   __ATOMIC_RELEASE
 #define TCTHREAD_MEMORDER_ACQ_REL   __ATOMIC_ACQ_REL
 #define TCTHREAD_MEMORDER_SEQ_CST   __ATOMIC_SEQ_CST
+
+// ***** boolean *****
+// valid memorder: RELAXED, CONSUME, ACQUIRE, SEQ_CST
+inline bool tcthread_atomicbool_load_explicit(volatile tcthread_atomicbool_t* ptr, int memorder) { return __atomic_load_n(ptr, memorder); }
+// valid memorder: RELAXED, RELEASE, SEQ_CST
+inline void tcthread_atomicbool_store_explicit(volatile tcthread_atomicbool_t* ptr, bool value, int memorder) { __atomic_store_n(ptr, value, memorder); }
+// valid memorder: RELAXED, ACQUIRE, RELEASE, ACQ_REL, SEQ_CST
+inline bool tcthread_atomicbool_exchange_explicit(volatile tcthread_atomicbool_t* ptr, tcthread_atomicbool_t desired, int memorder) { return __atomic_exchange_n(ptr, desired, memorder); }
 
 // ***** load/store *****
 // valid memorder: RELAXED, CONSUME, ACQUIRE, SEQ_CST
@@ -496,6 +505,74 @@ inline tcthread_atomicsz_t tcthread_atomicsz_dec_explicit(volatile tcthread_atom
 #define TCTHREAD_MEMORDER_RELEASE   0x4
 #define TCTHREAD_MEMORDER_ACQ_REL   0x7
 #define TCTHREAD_MEMORDER_SEQ_CST   0xF
+
+// ***** boolean *****
+// valid memorder: RELAXED, CONSUME, ACQUIRE, SEQ_CST
+inline bool tcthread_atomicbool_load_explicit(volatile tcthread_atomicbool_t* ptr, int memorder)
+{
+    switch(memorder)
+    {
+    case TCTHREAD_MEMORDER_RELAXED:
+#if defined(_M_ARM) || defined(_M_ARM64)
+        return _InterlockedCompareExchange8_nf((volatile char*)ptr, 0, 0);
+#endif
+    case TCTHREAD_MEMORDER_CONSUME:
+    case TCTHREAD_MEMORDER_ACQUIRE:
+#if defined(_M_ARM) || defined(_M_ARM64)
+        return _InterlockedCompareExchange8_acq((volatile char*)ptr, 0, 0);
+#endif
+    case TCTHREAD_MEMORDER_SEQ_CST:
+        return _InterlockedCompareExchange8((volatile char*)ptr, 0, 0);
+    }
+    __assume(0);    // unreachable
+    //return 0;
+}
+// valid memorder: RELAXED, RELEASE, SEQ_CST
+inline void tcthread_atomicbool_store_explicit(volatile tcthread_atomicbool_t* ptr, bool value, int memorder)
+{
+    switch(memorder)
+    {
+    case TCTHREAD_MEMORDER_RELAXED:
+#if defined(_M_ARM) || defined(_M_ARM64)
+        _InterlockedExchange8_nf((volatile char*)ptr, value);
+        return;
+#endif
+    case TCTHREAD_MEMORDER_RELEASE:
+#if defined(_M_ARM) || defined(_M_ARM64)
+        _InterlockedExchange8_rel((volatile char*)ptr, value);
+        return;
+#endif
+    case TCTHREAD_MEMORDER_SEQ_CST:
+        _InterlockedExchange8((volatile char*)ptr, value);
+        return;
+    }
+    __assume(0);    // unreachable
+}
+// valid memorder: RELAXED, ACQUIRE, RELEASE, ACQ_REL, SEQ_CST
+inline bool tcthread_atomicbool_exchange_explicit(volatile tcthread_atomicbool_t* ptr, tcthread_atomicbool_t desired, int memorder)
+{
+    switch(memorder)
+    {
+    case TCTHREAD_MEMORDER_RELAXED:
+#if defined(_M_ARM) || defined(_M_ARM64)
+        return _InterlockedExchange8_nf((volatile char*)ptr, desired);
+#endif
+    //case TCTHREAD_MEMORDER_CONSUME:   // seems to be unallowed
+    case TCTHREAD_MEMORDER_ACQUIRE:
+#if defined(_M_ARM) || defined(_M_ARM64)
+        return _InterlockedExchange8_acq((volatile char*)ptr, desired);
+#endif
+    case TCTHREAD_MEMORDER_RELEASE:
+#if defined(_M_ARM) || defined(_M_ARM64)
+        return _InterlockedExchange8_rel((volatile char*)ptr, desired);
+#endif
+    case TCTHREAD_MEMORDER_ACQ_REL:
+    case TCTHREAD_MEMORDER_SEQ_CST:
+        return _InterlockedExchange8((volatile char*)ptr, desired);
+    }
+    __assume(0);    // unreachable
+    //return 0;
+}
 
 // ***** load/store *****
 // valid memorder: RELAXED, CONSUME, ACQUIRE, SEQ_CST
@@ -1248,6 +1325,11 @@ inline tcthread_atomicptr_t tcthread_atomicptr_compare_exchange_weak_explicit(vo
 #define tcthread_atomicptr_exchange(ptr, desired)                           tcthread_atomicptr_exchange_explicit(ptr, desired, TCTHREAD_MEMORDER_SEQ_CST)
 #define tcthread_atomicptr_compare_exchange_strong(ptr, expected, desired)  tcthread_atomicptr_compare_exchange_strong_explicit(ptr, expected, desired, TCTHREAD_MEMORDER_SEQ_CST, TCTHREAD_MEMORDER_SEQ_CST)
 #define tcthread_atomicptr_compare_exchange_weak(ptr, expected, desired)    tcthread_atomicptr_compare_exchange_weak_explicit(ptr, expected, desired, TCTHREAD_MEMORDER_SEQ_CST, TCTHREAD_MEMORDER_SEQ_CST)
+
+// ***** boolean *****
+#define tcthread_atomicbool_load(ptr)                                       tcthread_atomicbool_load_explicit(pre, TCTHREAD_MEMORDER_SEQ_CST)
+#define tcthread_atomicbool_store(ptr, value)                               tcthread_atomicbool_store_explicit(ptr, value, TCTHREAD_MEMORDER_SEQ_CST)
+#define tcthread_atomicbool_exchange(ptr, desired)                          tcthread_atomicbool_exchange_explicit(ptr, desired, TCTHREAD_MEMORDER_SEQ_CST)
 
 // ***** store/load *****
 #define tcthread_atomic32_load(ptr)                                         tcthread_atomic32_load_explicit(ptr, TCTHREAD_MEMORDER_SEQ_CST)
@@ -2219,12 +2301,10 @@ void tcthread_rwlock_unlock_wr(tcthread_rwlock_t rwlock)
 
 // ********** ATOMICS **********
 
-// ***** atomicptr (wrappers around `atomicsz`) *****
-tcthread_atomicptr_t tcthread_atomicptr_load_explicit(volatile tcthread_atomicptr_t* ptr, int memorder);
-void tcthread_atomicptr_store_explicit(volatile tcthread_atomicptr_t* ptr, tcthread_atomicptr_t value, int memorder);
-tcthread_atomicptr_t tcthread_atomicptr_exchange_explicit(volatile tcthread_atomicptr_t* ptr, tcthread_atomicptr_t desired, int memorder);
-tcthread_atomicptr_t tcthread_atomicptr_compare_exchange_strong_explicit(volatile tcthread_atomicptr_t* ptr, tcthread_atomicptr_t* expected, tcthread_atomicptr_t desired, int memorder_success, int memorder_failure);
-tcthread_atomicptr_t tcthread_atomicptr_compare_exchange_weak_explicit(volatile tcthread_atomicptr_t* ptr, tcthread_atomicptr_t* expected, tcthread_atomicptr_t desired, int memorder_success, int memorder_failure);
+// ***** boolean *****
+bool tcthread_atomicbool_load_explicit(volatile tcthread_atomicbool_t* ptr, int memorder);
+void tcthread_atomicbool_store_explicit(volatile tcthread_atomicbool_t* ptr, bool value, int memorder);
+bool tcthread_atomicbool_exchange_explicit(volatile tcthread_atomicbool_t* ptr, tcthread_atomicbool_t desired, int memorder);
 
 // ***** load/store *****
 tcthread_atomic32_t tcthread_atomic32_load_explicit(volatile tcthread_atomic32_t* ptr, int memorder);
