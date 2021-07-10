@@ -1857,7 +1857,7 @@ void tcthread_cond_destroy(tcthread_cond_t cond)
 #elif defined(TCTHREAD__PLATFORM_POSIX)
     pthread_cond_t* pcond = TC__REINTERPRET_CAST(pthread_cond_t*, cond.handle);
     if(pthread_cond_destroy(pcond))
-        TC_ASSERT(false, "pthread_cond_destroy failed (probably in use or invalid parameter)")
+        TC_ASSERT(false, "pthread_cond_destroy failed (probably in use or invalid parameter)");
     TC_FREE(pcond);
 #else
     #pragma message ("Warning: tcthread_cond_destroy uninplemented on platform")
