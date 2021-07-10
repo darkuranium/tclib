@@ -8,6 +8,7 @@
  * URL: https://github.com/darkuranium/tclib
  *
  * VERSION HISTORY:
+ * 0.2.1    fixed macros tcthread_atomic{32,sz}_{inc,dec}
  * 0.2.0    implemented semaphores & RW locks
  * 0.1.0    initial public release
  *
@@ -1274,10 +1275,10 @@ inline tcthread_atomicptr_t tcthread_atomicptr_compare_exchange_weak_explicit(vo
 #define tcthread_atomicsz_fetch_or(ptr, value)  tcthread_atomicsz_fetch_or_explicit(ptr, value, TCTHREAD_MEMORDER_SEQ_CST)
 
 // ***** increment & decrement; these return the *new* value *****
-#define tcthread_atomic32_inc(ptr)  tcthread_atomic_inc32_explicit(ptr, TCTHREAD_MEMORDER_SEQ_CST)
-#define tcthread_atomicsz_inc(ptr)  tcthread_atomic_incptr_explicit(ptr, TCTHREAD_MEMORDER_SEQ_CST)
-#define tcthread_atomic32_dec(ptr)  tcthread_atomic_dec32_explicit(ptr, TCTHREAD_MEMORDER_SEQ_CST)
-#define tcthread_atomicsz_dec(ptr)  tcthread_atomic_decptr_explicit(ptr, TCTHREAD_MEMORDER_SEQ_CST)
+#define tcthread_atomic32_inc(ptr)  tcthread_atomic32_inc_explicit(ptr, TCTHREAD_MEMORDER_SEQ_CST)
+#define tcthread_atomicsz_inc(ptr)  tcthread_atomicsz_inc_explicit(ptr, TCTHREAD_MEMORDER_SEQ_CST)
+#define tcthread_atomic32_dec(ptr)  tcthread_atomic32_dec_explicit(ptr, TCTHREAD_MEMORDER_SEQ_CST)
+#define tcthread_atomicsz_dec(ptr)  tcthread_atomicsz_dec_explicit(ptr, TCTHREAD_MEMORDER_SEQ_CST)
 
 // ***** reference-counting *****
 /*
