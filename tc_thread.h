@@ -8,6 +8,7 @@
  * URL: https://github.com/darkuranium/tclib
  *
  * VERSION HISTORY:
+ * 0.2.2    fixed some instances of malloc() not using TC_MALLOC
  * 0.2.1    fixed macros tcthread_atomic{32,sz}_{inc,dec}
  * 0.2.0    implemented semaphores & RW locks
  * 0.1.0    initial public release
@@ -1972,7 +1973,7 @@ tcthread_sem_t tcthread_sem_create(uint32_t initial_value)
     return sem;
 #elif defined(TCTHREAD__PLATFORM_POSIX)
     tcthread_sem_t sem = {0};
-    sem_t* psem = TC__VOID_CAST(sem_t*, malloc(sizeof(sem_t)));
+    sem_t* psem = TC__VOID_CAST(sem_t*, TC_MALLOC(sizeof(sem_t)));
     if(sem_init(psem, 0, initial_value))    // error
     {
         TC_FREE(psem);
@@ -2085,13 +2086,13 @@ tcthread_rwlock_t tcthread_rwlock_create(void)
 {
 #if defined(TCTHREAD__PLATFORM_WINDOWS)
     tcthread_rwlock_t rwlock = {0};
-    SRWLOCK* srw = TC__VOID_CAST(SRWLOCK*, malloc(sizeof(SRWLOCK)));
+    SRWLOCK* srw = TC__VOID_CAST(SRWLOCK*, TC_MALLOC(sizeof(SRWLOCK)));
     InitializeSRWLock(srw);
     rwlock.handle = TC__REINTERPRET_CAST(uintptr_t, srw);
     return rwlock;
 #elif defined(TCTHREAD__PLATFORM_POSIX)
     tcthread_rwlock_t rwlock = {0};
-    pthread_rwlock_t* prwlock = TC__VOID_CAST(pthread_rwlock_t*, malloc(sizeof(pthread_rwlock_t)));
+    pthread_rwlock_t* prwlock = TC__VOID_CAST(pthread_rwlock_t*, TC_MALLOC(sizeof(pthread_rwlock_t)));
     if(pthread_rwlock_init(prwlock, NULL))  // error
     {
         TC_FREE(prwlock);
