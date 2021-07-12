@@ -2335,8 +2335,8 @@ tcthread_atomicsz_t tcthread_atomicsz_fetch_or_explicit(volatile tcthread_atomic
 
 // ***** increment & decrement; these return the *new* value *****
 tcthread_atomic32_t tcthread_atomic32_inc_explicit(volatile tcthread_atomic32_t* ptr, int memorder);
-tcthread_atomicsz_t tcthread_atomic_inc_explicit(volatile tcthread_atomicsz_t* ptr, int memorder);
+tcthread_atomicsz_t tcthread_atomicsz_inc_explicit(volatile tcthread_atomicsz_t* ptr, int memorder);
 tcthread_atomic32_t tcthread_atomic32_dec_explicit(volatile tcthread_atomic32_t* ptr, int memorder);
-tcthread_atomicsz_t tcthread_atomic_dec_explicit(volatile tcthread_atomicsz_t* ptr, int memorder);
+tcthread_atomicsz_t tcthread_atomicsz_dec_explicit(volatile tcthread_atomicsz_t* ptr, int memorder);
 
 #endif /* TC_THREAD_IMPLEMENTATION */
