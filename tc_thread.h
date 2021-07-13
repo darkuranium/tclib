@@ -461,10 +461,10 @@ inline tcthread_atomic32_t tcthread_atomic32_exchange_explicit(volatile tcthread
 inline tcthread_atomicsz_t tcthread_atomicsz_exchange_explicit(volatile tcthread_atomicsz_t* ptr, tcthread_atomicsz_t desired, int memorder) { return __atomic_exchange_n(ptr, desired, memorder); }
 // valid memorder_success: (any)
 // valid memorder_failure: RELAXED, CONSUME, ACQUIRE, SEQ_CST; must *not* be stronger than memorder_success
-inline tcthread_atomic32_t tcthread_atomic32_compare_exchange_strong_explicit(volatile tcthread_atomic32_t* ptr, tcthread_atomic32_t* expected, tcthread_atomic32_t desired, int memorder_success, int memorder_failure) { return __atomic_compare_exchange_n(ptr, expected, desired, false, memorder_success, memorder_failure); }
-inline tcthread_atomicsz_t tcthread_atomicsz_compare_exchange_strong_explicit(volatile tcthread_atomicsz_t* ptr, tcthread_atomicsz_t* expected, tcthread_atomicsz_t desired, int memorder_success, int memorder_failure) { return __atomic_compare_exchange_n(ptr, expected, desired, false, memorder_success, memorder_failure); }
-inline tcthread_atomic32_t tcthread_atomic32_compare_exchange_weak_explicit(volatile tcthread_atomic32_t* ptr, tcthread_atomic32_t* expected, tcthread_atomic32_t desired, int memorder_success, int memorder_failure) { return __atomic_compare_exchange_n(ptr, expected, desired, true, memorder_success, memorder_failure); }
-inline tcthread_atomicsz_t tcthread_atomicsz_compare_exchange_weak_explicit(volatile tcthread_atomicsz_t* ptr, tcthread_atomicsz_t* expected, tcthread_atomicsz_t desired, int memorder_success, int memorder_failure) { return __atomic_compare_exchange_n(ptr, expected, desired, true, memorder_success, memorder_failure); }
+inline tcthread_atomic32_t tcthread_atomic32_compare_exchange_strong_explicit(volatile tcthread_atomic32_t* ptr, tcthread_atomic32_t expected, tcthread_atomic32_t desired, int memorder_success, int memorder_failure) { __atomic_compare_exchange_n(ptr, &expected, desired, false, memorder_success, memorder_failure); return expected; }
+inline tcthread_atomicsz_t tcthread_atomicsz_compare_exchange_strong_explicit(volatile tcthread_atomicsz_t* ptr, tcthread_atomicsz_t expected, tcthread_atomicsz_t desired, int memorder_success, int memorder_failure) { __atomic_compare_exchange_n(ptr, &expected, desired, false, memorder_success, memorder_failure); return expected; }
+inline tcthread_atomic32_t tcthread_atomic32_compare_exchange_weak_explicit(volatile tcthread_atomic32_t* ptr, tcthread_atomic32_t expected, tcthread_atomic32_t desired, int memorder_success, int memorder_failure) { __atomic_compare_exchange_n(ptr, &expected, desired, true, memorder_success, memorder_failure); return expected; }
+inline tcthread_atomicsz_t tcthread_atomicsz_compare_exchange_weak_explicit(volatile tcthread_atomicsz_t* ptr, tcthread_atomicsz_t expected, tcthread_atomicsz_t desired, int memorder_success, int memorder_failure) { __atomic_compare_exchange_n(ptr, &expected, desired, true, memorder_success, memorder_failure); return expected; }
 
 // ***** arithmetic & bitwise *****
 // valid memorder: (any)
@@ -739,7 +739,7 @@ inline tcthread_atomicsz_t tcthread_atomicsz_exchange_explicit(volatile tcthread
 }
 // valid memorder_success: (any)
 // valid memorder_failure: RELAXED, CONSUME, ACQUIRE, SEQ_CST; must *not* be stronger than memorder_success
-inline tcthread_atomic32_t tcthread_atomic32_compare_exchange_strong_explicit(volatile tcthread_atomic32_t* ptr, tcthread_atomic32_t* expected, tcthread_atomic32_t desired, int memorder_success, int memorder_failure)
+inline tcthread_atomic32_t tcthread_atomic32_compare_exchange_strong_explicit(volatile tcthread_atomic32_t* ptr, tcthread_atomic32_t expected, tcthread_atomic32_t desired, int memorder_success, int memorder_failure)
 {
     switch(memorder_success | memorder_failure)
     {
@@ -747,63 +747,63 @@ inline tcthread_atomic32_t tcthread_atomic32_compare_exchange_strong_explicit(vo
     // strangely, there is no _InterlockedCompareExchange_nf on ARM
 #if defined(_M_ARM)
     // On 32-bit, we can simulate it with the same operation on pointers.
-    return (tcthread_atomic32_t)_InterlockedCompareExchangePointer_nf((void* volatile*)ptr, NULL, NULL);
+    return (tcthread_atomic32_t)_InterlockedCompareExchangePointer_nf((void* volatile*)ptr, (void*)desired, (void*)expected);
 //#elif defined(_M_ARM64) // On 64-bit, we're out of luck. Fallthrough to ACQUIRE
 #endif
     case TCTHREAD_MEMORDER_CONSUME:
     case TCTHREAD_MEMORDER_ACQUIRE:
 #if defined(_M_IX86) || defined(_M_AMD64)
-        return _InterlockedCompareExchange_HLEAcquire((volatile long*)ptr, desired, *expected);
+        return _InterlockedCompareExchange_HLEAcquire((volatile long*)ptr, desired, expected);
 #elif defined(_M_ARM) || defined(_M_ARM64)
-        return _InterlockedCompareExchange_acq((volatile long*)ptr, desired, *expected);
+        return _InterlockedCompareExchange_acq((volatile long*)ptr, desired, expected);
 #endif
     case TCTHREAD_MEMORDER_RELEASE:
 #if defined(_M_IX86) || defined(_M_AMD64)
-        return _InterlockedCompareExchange_HLERelease((volatile long*)ptr, desired, *expected);
+        return _InterlockedCompareExchange_HLERelease((volatile long*)ptr, desired, expected);
 #elif defined(_M_ARM) || defined(_M_ARM64)
-        return _InterlockedCompareExchange_rel((volatile long*)ptr, desired, *expected);
+        return _InterlockedCompareExchange_rel((volatile long*)ptr, desired, expected);
 #endif
     case TCTHREAD_MEMORDER_ACQ_REL:
     case TCTHREAD_MEMORDER_SEQ_CST:
-        return _InterlockedCompareExchange((volatile long*)ptr, desired, *expected);
+        return _InterlockedCompareExchange((volatile long*)ptr, desired, expected);
     }
     __assume(0);    // unreachable
     //return 0;
 }
-inline tcthread_atomicsz_t tcthread_atomicsz_compare_exchange_strong_explicit(volatile tcthread_atomicsz_t* ptr, tcthread_atomicsz_t* expected, tcthread_atomicsz_t desired, int memorder_success, int memorder_failure)
+inline tcthread_atomicsz_t tcthread_atomicsz_compare_exchange_strong_explicit(volatile tcthread_atomicsz_t* ptr, tcthread_atomicsz_t expected, tcthread_atomicsz_t desired, int memorder_success, int memorder_failure)
 {
     switch(memorder_success | memorder_failure)
     {
     case TCTHREAD_MEMORDER_RELAXED:
 #if defined(_M_ARM) || defined(_M_ARM64)
-        return (tcthread_atomicsz_t)_InterlockedCompareExchangePointer_nf(ptr, (void*)desired, (void*)*expected);
+        return (tcthread_atomicsz_t)_InterlockedCompareExchangePointer_nf(ptr, (void*)desired, (void*)expected);
 #endif
     case TCTHREAD_MEMORDER_CONSUME:
     case TCTHREAD_MEMORDER_ACQUIRE:
 #if defined(_M_IX86) || defined(_M_AMD64)
-        return (tcthread_atomicsz_t)_InterlockedCompareExchangePointer_HLEAcquire(ptr, (void*)desired, (void*)*expected);
+        return (tcthread_atomicsz_t)_InterlockedCompareExchangePointer_HLEAcquire(ptr, (void*)desired, (void*)expected);
 #elif defined(_M_ARM) || defined(_M_ARM64)
-        return (tcthread_atomicsz_t)_InterlockedCompareExchangePointer_acq(ptr, (void*)desired, (void*)*expected);
+        return (tcthread_atomicsz_t)_InterlockedCompareExchangePointer_acq(ptr, (void*)desired, (void*)expected);
 #endif
     case TCTHREAD_MEMORDER_RELEASE:
 #if defined(_M_IX86) || defined(_M_AMD64)
-        return (tcthread_atomicsz_t)_InterlockedCompareExchangePointer_HLERelease(ptr, (void*)desired, (void*)*expected);
+        return (tcthread_atomicsz_t)_InterlockedCompareExchangePointer_HLERelease(ptr, (void*)desired, (void*)expected);
 #elif defined(_M_ARM) || defined(_M_ARM64)
-        return (tcthread_atomicsz_t)_InterlockedCompareExchangePointer_rel(ptr, (void*)desired, (void*)*expected);
+        return (tcthread_atomicsz_t)_InterlockedCompareExchangePointer_rel(ptr, (void*)desired, (void*)expected);
 #endif
     case TCTHREAD_MEMORDER_ACQ_REL:
     case TCTHREAD_MEMORDER_SEQ_CST:
-        return (tcthread_atomicsz_t)_InterlockedCompareExchangePointer(ptr, (void*)desired, (void*)*expected);
+        return (tcthread_atomicsz_t)_InterlockedCompareExchangePointer(ptr, (void*)desired, (void*)expected);
     }
     __assume(0);    // unreachable
     //return 0;
 }
 // MSVC has no `weak` vs `strong` semantics
-inline tcthread_atomic32_t tcthread_atomic32_compare_exchange_weak_explicit(volatile tcthread_atomic32_t* ptr, tcthread_atomic32_t* expected, tcthread_atomic32_t desired, int memorder_success, int memorder_failure)
+inline tcthread_atomic32_t tcthread_atomic32_compare_exchange_weak_explicit(volatile tcthread_atomic32_t* ptr, tcthread_atomic32_t expected, tcthread_atomic32_t desired, int memorder_success, int memorder_failure)
 {
     return tcthread_atomic32_compare_exchange_strong_explicit(ptr, expected, desired, memorder_success, memorder_failure);
 }
-inline tcthread_atomicsz_t tcthread_atomicsz_compare_exchange_weak_explicit(volatile tcthread_atomicsz_t* ptr, tcthread_atomicsz_t* expected, tcthread_atomicsz_t desired, int memorder_success, int memorder_failure)
+inline tcthread_atomicsz_t tcthread_atomicsz_compare_exchange_weak_explicit(volatile tcthread_atomicsz_t* ptr, tcthread_atomicsz_t expected, tcthread_atomicsz_t desired, int memorder_success, int memorder_failure)
 {
     return tcthread_atomicsz_compare_exchange_strong_explicit(ptr, expected, desired, memorder_success, memorder_failure);
 }
@@ -1299,21 +1299,21 @@ inline tcthread_atomicptr_t tcthread_atomicptr_exchange_explicit(volatile tcthre
         memorder
     ));
 }
-inline tcthread_atomicptr_t tcthread_atomicptr_compare_exchange_strong_explicit(volatile tcthread_atomicptr_t* ptr, tcthread_atomicptr_t* expected, tcthread_atomicptr_t desired, int memorder_success, int memorder_failure)
+inline tcthread_atomicptr_t tcthread_atomicptr_compare_exchange_strong_explicit(volatile tcthread_atomicptr_t* ptr, tcthread_atomicptr_t expected, tcthread_atomicptr_t desired, int memorder_success, int memorder_failure)
 {
     return TC__REINTERPRET_CAST(tcthread_atomicptr_t, tcthread_atomicsz_compare_exchange_strong_explicit(
         TC__REINTERPRET_CAST(volatile tcthread_atomicsz_t*, ptr),
-        TC__REINTERPRET_CAST(tcthread_atomicsz_t*, expected),
+        TC__REINTERPRET_CAST(tcthread_atomicsz_t, expected),
         TC__REINTERPRET_CAST(tcthread_atomicsz_t, desired),
         memorder_success,
         memorder_failure
     ));
 }
-inline tcthread_atomicptr_t tcthread_atomicptr_compare_exchange_weak_explicit(volatile tcthread_atomicptr_t* ptr, tcthread_atomicptr_t* expected, tcthread_atomicptr_t desired, int memorder_success, int memorder_failure)
+inline tcthread_atomicptr_t tcthread_atomicptr_compare_exchange_weak_explicit(volatile tcthread_atomicptr_t* ptr, tcthread_atomicptr_t expected, tcthread_atomicptr_t desired, int memorder_success, int memorder_failure)
 {
     return TC__REINTERPRET_CAST(tcthread_atomicptr_t, tcthread_atomicsz_compare_exchange_weak_explicit(
         TC__REINTERPRET_CAST(volatile tcthread_atomicsz_t*, ptr),
-        TC__REINTERPRET_CAST(tcthread_atomicsz_t*, expected),
+        TC__REINTERPRET_CAST(tcthread_atomicsz_t, expected),
         TC__REINTERPRET_CAST(tcthread_atomicsz_t, desired),
         memorder_success,
         memorder_failure
@@ -2301,6 +2301,13 @@ void tcthread_rwlock_unlock_wr(tcthread_rwlock_t rwlock)
 
 // ********** ATOMICS **********
 
+// ***** atomicptr (wrappers around `atomicsz`) *****
+tcthread_atomicptr_t tcthread_atomicptr_load_explicit(volatile tcthread_atomicptr_t* ptr, int memorder);
+void tcthread_atomicptr_store_explicit(volatile tcthread_atomicptr_t* ptr, tcthread_atomicptr_t value, int memorder);
+tcthread_atomicptr_t tcthread_atomicptr_exchange_explicit(volatile tcthread_atomicptr_t* ptr, tcthread_atomicptr_t desired, int memorder);
+tcthread_atomicptr_t tcthread_atomicptr_compare_exchange_strong_explicit(volatile tcthread_atomicptr_t* ptr, tcthread_atomicptr_t expected, tcthread_atomicptr_t desired, int memorder_success, int memorder_failure);
+tcthread_atomicptr_t tcthread_atomicptr_compare_exchange_weak_explicit(volatile tcthread_atomicptr_t* ptr, tcthread_atomicptr_t expected, tcthread_atomicptr_t desired, int memorder_success, int memorder_failure);
+
 // ***** boolean *****
 bool tcthread_atomicbool_load_explicit(volatile tcthread_atomicbool_t* ptr, int memorder);
 void tcthread_atomicbool_store_explicit(volatile tcthread_atomicbool_t* ptr, bool value, int memorder);
@@ -2315,10 +2322,10 @@ void tcthread_atomicsz_store_explicit(volatile tcthread_atomicsz_t* ptr, tcthrea
 // ***** (compare-and-)swap *****
 tcthread_atomic32_t tcthread_atomic32_exchange_explicit(volatile tcthread_atomic32_t* ptr, tcthread_atomic32_t desired, int memorder);
 tcthread_atomicsz_t tcthread_atomicsz_exchange_explicit(volatile tcthread_atomicsz_t* ptr, tcthread_atomicsz_t desired, int memorder);
-tcthread_atomic32_t tcthread_atomic32_compare_exchange_strong_explicit(volatile tcthread_atomic32_t* ptr, tcthread_atomic32_t* expected, tcthread_atomic32_t desired, int memorder_success, int memorder_failure);
-tcthread_atomicsz_t tcthread_atomicsz_compare_exchange_strong_explicit(volatile tcthread_atomicsz_t* ptr, tcthread_atomicsz_t* expected, tcthread_atomicsz_t desired, int memorder_success, int memorder_failure);
-tcthread_atomic32_t tcthread_atomic32_compare_exchange_weak_explicit(volatile tcthread_atomic32_t* ptr, tcthread_atomic32_t* expected, tcthread_atomic32_t desired, int memorder_success, int memorder_failure);
-tcthread_atomicsz_t tcthread_atomicsz_compare_exchange_weak_explicit(volatile tcthread_atomicsz_t* ptr, tcthread_atomicsz_t* expected, tcthread_atomicsz_t desired, int memorder_success, int memorder_failure);
+tcthread_atomic32_t tcthread_atomic32_compare_exchange_strong_explicit(volatile tcthread_atomic32_t* ptr, tcthread_atomic32_t expected, tcthread_atomic32_t desired, int memorder_success, int memorder_failure);
+tcthread_atomicsz_t tcthread_atomicsz_compare_exchange_strong_explicit(volatile tcthread_atomicsz_t* ptr, tcthread_atomicsz_t expected, tcthread_atomicsz_t desired, int memorder_success, int memorder_failure);
+tcthread_atomic32_t tcthread_atomic32_compare_exchange_weak_explicit(volatile tcthread_atomic32_t* ptr, tcthread_atomic32_t expected, tcthread_atomic32_t desired, int memorder_success, int memorder_failure);
+tcthread_atomicsz_t tcthread_atomicsz_compare_exchange_weak_explicit(volatile tcthread_atomicsz_t* ptr, tcthread_atomicsz_t expected, tcthread_atomicsz_t desired, int memorder_success, int memorder_failure);
 
 // ***** arithmetic & bitwise *****
 tcthread_atomic32_t tcthread_atomic32_fetch_add_explicit(volatile tcthread_atomic32_t* ptr, tcthread_atomic32_t value, int memorder);
