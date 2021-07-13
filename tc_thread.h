@@ -378,7 +378,6 @@ typedef void* tcthread_runner_t(void* udata);
 tcthread_t tcthread_create(size_t stack_size, tcthread_runner_t* runner, void* udata);
 inline bool tcthread_is_valid(tcthread_t thread) { return thread.handle; }
 void tcthread_join(tcthread_t thread, void** retval);
-// TODO: fix memory leak
 void tcthread_detach(tcthread_t thread);
 // works with current thread
 TC_HINT_NORETURN void tcthread_exit(void* retval);   // WARNING: May or may not run C++ destructors
@@ -1474,7 +1473,15 @@ struct tcthread_internal_
     HANDLE handle;
     void* data;
     tcthread_runner_t* runner;
+    tcthread_atomicbool_t done_or_detached;
 };
+static void tcthread_before_exit_(struct tcthread_internal_* internal, void* retval)
+{
+    internal->data = retval;
+    // test-and-set; if this was already set, then thread was detached, and we can free its data
+    if(tcthread_atomicbool_exchange_explicit(&internal->done_or_detached, true, TCTHREAD_MEMORDER_ACQ_REL))
+        TC_FREE(internal);
+}
 static unsigned __stdcall tcthread_create_runner_(LPVOID ptr)
 {
     struct tcthread_internal_* internal = TC__VOID_CAST(struct tcthread_internal_*, ptr);
@@ -1484,7 +1491,7 @@ static unsigned __stdcall tcthread_create_runner_(LPVOID ptr)
         // (but it needs locking in said function)
         //return 1;
     }
-    internal->data = internal->runner(internal->data);
+    tcthread_before_exit_(internal, internal->runner(internal->data));
     return 0;
 }
 typedef DWORD winapi_GetActiveProcessorCount_t(WORD);
@@ -1518,7 +1525,14 @@ struct tcthread_internal_
     void* data;
     tcthread_runner_t* runner;
     pthread_mutex_t mutex;
+    tcthread_atomicbool_t done_or_detached;
 };
+static void tcthread_before_exit_(struct tcthread_internal_* internal)
+{
+    // test-and-set; if this was already set, then thread was detached, and we can free its data
+    if(tcthread_atomicbool_exchange_explicit(&internal->done_or_detached, true, TCTHREAD_MEMORDER_ACQ_REL))
+        TC_FREE(internal);
+}
 static void* tcthread_create_runner_(void* ptr)
 {
     struct tcthread_internal_* internal = TC__VOID_CAST(struct tcthread_internal_*, ptr);
@@ -1532,7 +1546,9 @@ static void* tcthread_create_runner_(void* ptr)
     // these can fail, but again, what do we do about it?
     pthread_mutex_lock(&internal->mutex);
     pthread_mutex_unlock(&internal->mutex);
-    return internal->runner(internal->data);
+    void* retval = internal->runner(internal->data);
+    tcthread_before_exit_(internal);
+    return retval;
 }
 static struct timespec tcthread_timespec_from_ms_(uint32_t ms)
 {
@@ -1650,6 +1666,7 @@ tcthread_t tcthread_create(size_t stack_size, tcthread_runner_t* runner, void* u
     struct tcthread_internal_* internal = TC__VOID_CAST(struct tcthread_internal_*, TC_MALLOC(sizeof(struct tcthread_internal_)));
     internal->data = udata;
     internal->runner = runner;
+    tcthread_atomicbool_store_explicit(&internal->done_or_detached, false, TCTHREAD_MEMORDER_RELEASE);
 
     // created as a suspended thread to avoid races
     uintptr_t handle = _beginthreadex(NULL, TC__STATIC_CAST(DWORD, stack_size), tcthread_create_runner_, internal, CREATE_SUSPENDED, NULL);
@@ -1671,6 +1688,8 @@ tcthread_t tcthread_create(size_t stack_size, tcthread_runner_t* runner, void* u
     struct tcthread_internal_* internal = TC__VOID_CAST(struct tcthread_internal_*, TC_MALLOC(sizeof(struct tcthread_internal_)));
     internal->data = udata;
     internal->runner = runner;
+    tcthread_atomicbool_store_explicit(&internal->done_or_detached, false, TCTHREAD_MEMORDER_RELEASE);
+
     if(pthread_mutex_init(&internal->mutex, NULL))
     {
         TC_FREE(internal);
@@ -1752,10 +1771,16 @@ void tcthread_detach(tcthread_t thread)
     struct tcthread_internal_* internal = TC__REINTERPRET_CAST(struct tcthread_internal_*, thread.handle);
     if(!CloseHandle(internal->handle))
         TC_ASSERT(false, "CloseHandle failed");
+    // test-and-set; if this was already set, then thread has already exited, and we can free its data
+    if(tcthread_atomicbool_exchange_explicit(&internal->done_or_detached, true, TCTHREAD_MEMORDER_ACQ_REL))
+        TC_FREE(internal);
 #elif defined(TCTHREAD__PLATFORM_POSIX)
     struct tcthread_internal_* internal = TC__REINTERPRET_CAST(struct tcthread_internal_*, thread.handle);
     if(!pthread_detach(internal->handle))
         TC_ASSERT(false, "pthread_detach failed (thread is non-detachable or invalid parameter)");
+    // test-and-set; if this was already set, then thread has already exited, and we can free its data
+    if(tcthread_atomicbool_exchange_explicit(&internal->done_or_detached, true, TCTHREAD_MEMORDER_ACQ_REL))
+        TC_FREE(internal);
 #else
     #pragma message ("Warning: tcthread_detach uninplemented on platform")
 #endif
@@ -1768,15 +1793,16 @@ void tcthread_exit(void* retval)
     if(tcthread_is_valid(thread))
     {
         struct tcthread_internal_* internal = TC__REINTERPRET_CAST(struct tcthread_internal_*, thread.handle);
-        internal->data = retval;
+        tcthread_before_exit_(internal, retval);
     }
     _endthreadex(0);
 #elif defined(TCTHREAD__PLATFORM_POSIX)
-    /*tcthread_t thread = tcthread_self();
+    tcthread_t thread = tcthread_self();
     if(tcthread_is_valid(thread))
     {
         struct tcthread_internal_* internal = TC__REINTERPRET_CAST(struct tcthread_internal_*, thread.handle);
-    }*/
+        tcthread_before_exit_(internal);
+    }
     pthread_exit(retval);
 #else
     #pragma message ("Warning: tcthread_exit uninplemented on platform")
