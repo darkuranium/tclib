@@ -1499,6 +1499,7 @@ union winapi_GetActiveProcessorCount_conv
 {
     void* void_ptr;
     winapi_GetActiveProcessorCount_t* proc;
+    FARPROC farproc;
 };
 #elif defined(TCTHREAD__PLATFORM_POSIX)
 
@@ -1583,9 +1584,9 @@ uint32_t tcthread_get_cpu_count(void)
         {
             union winapi_GetActiveProcessorCount_conv conv;
             // GetActiveProcessorCount is what we want out of it
-            conv.proc = (winapi_GetActiveProcessorCount_t*)GetProcAddress(lib_kernel32, "GetActiveProcessorCount");
+            conv.farproc = GetProcAddress(lib_kernel32, "GetActiveProcessorCount");
             // if InterlockedCompareExchangePointer fails (= procedure was already loaded), we free the lib_kernel32, to maintain the correct refcount
-            if(conv.proc && InterlockedCompareExchangePointer(&winapi_GetActiveProcessorCount.void_ptr, conv.void_ptr, NULL))
+            if(conv.farproc && InterlockedCompareExchangePointer(&winapi_GetActiveProcessorCount.void_ptr, conv.void_ptr, NULL))
                 FreeLibrary(lib_kernel32);
         }
         // mark that an attempt was completed, so that we don't keep trying if this fails (for performance reasons)
