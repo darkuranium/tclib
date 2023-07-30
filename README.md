@@ -6,7 +6,7 @@ A set of single-file public domain libraries done in the spirit of the [stb libr
 
 Note that some of the libraries have dependencies. For a quick reference see the "`DEPENDS:`" line near the top of each file.
 
-The following libraries are currently available (*all are currently* ***alpha version***). The prefix ("`tc_`") is subject to change until stable release.
+The following libraries are currently available.
 
 | Library            | Version | Description                                                                   | Dependencies                       |
 |:-------------------|:--------|:------------------------------------------------------------------------------|:-----------------------------------|
@@ -19,6 +19,7 @@ The following libraries are currently available (*all are currently* ***alpha ve
 | tc_texture_load.h  | -.-.-   | Texture loading (currently only DDS).                                         |                                    |
 | tc_texture_codec.h | -.-.-   | Texture block (de)compression (currently only decompressors).                 |                                    |
 | tc_thread.h        | -.-.-   | Threading &amp; atomics (atomics, threads, mutexes, condition variables, ...) |                                    |
+| tc_vox.h           | 0.1.0   | [MagicaVoxel](https://ephtracy.github.io/) `*.vox` loading library.           |                                    |
 
 Target OSes are Windows, Linux, FreeBSD and Mac OS X. Note that I do not currently have access to OS X, so the code might be buggier than usual.
 
