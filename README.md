@@ -20,6 +20,7 @@ The following libraries are currently available.
 | tc_texture_codec.h | -.-.-   | Texture block (de)compression (currently only decompressors).                 |                                    |
 | tc_thread.h        | -.-.-   | Threading &amp; atomics (atomics, threads, mutexes, condition variables, ...) |                                    |
 | tc_vox.h           | 0.1.0   | [MagicaVoxel](https://ephtracy.github.io/) `*.vox` loading library.           |                                    |
+| tc_xml.h           | 0.1.0   | XML parsing (for now only *mostly* compliant).                                |                                    |
 
 Target OSes are Windows, Linux, FreeBSD and Mac OS X. Note that I do not currently have access to OS X, so the code might be buggier than usual.
 
