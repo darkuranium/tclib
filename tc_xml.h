@@ -59,7 +59,7 @@ typedef struct tcxml_sax_callbacks
     // basic text
     void (*text)(tcxml_string_t text, size_t body_head, size_t body_tail, void* udata);
     // element start, e.g. <foo>
-    void (*element_start)(tcxml_string_t tag, tcxml_string_t const* attrs, size_t nattrs, void* udata);
+    void (*element_start)(tcxml_string_t tag, tcxml_string_t* attrs, size_t nattrs, void* udata);
     // element end, e.g. </foo>
     void (*element_end)(tcxml_string_t tag, void* udata);
     // processing instruction, e.g. <?foo ... ?>
@@ -984,17 +984,18 @@ static bool tcxml_px_element_(struct tcxml_parse_context_* restrict ctx)
     ptr = ctx->ptr;
     if(tcxml_p_EmptyElemTag_(ctx))
     {
-        tcxml_data_reset_(ctx->bufs); // (optional)
-
         if(ctx->cbs->element_start || ctx->cbs->element_end)
         {
+            assert((ctx->bufs->attrs.len & 1) == 0 && "Expected an even number of attribute elements");
+
             tcxml_string_t tag = tcxml_data_push_(ctx->bufs, ctx->capture);
             if(ctx->cbs->element_start)
-                ctx->cbs->element_start(tag, NULL, 0, ctx->udata);
+                ctx->cbs->element_start(tag, ctx->bufs->attrs.ptr, ctx->bufs->attrs.len / 2, ctx->udata);
             if(ctx->cbs->element_end)
                 ctx->cbs->element_end(tag, ctx->udata);
             tcxml_data_popn_(ctx->bufs, 1);
         }
+        tcxml_data_reset_(ctx->bufs); // (optional)
         return true;    // don't care about capture (we've already invoked events)
     }
     ctx->ptr = ptr;
@@ -1002,8 +1003,6 @@ static bool tcxml_px_element_(struct tcxml_parse_context_* restrict ctx)
     if(!tcxml_p_STag_(ctx))
         return false;   // forward error
     tcxml_string_t start_tag = ctx->capture;
-
-    tcxml_data_reset_(ctx->bufs); // (optional)
 
     // TODO: adjust stack
 
@@ -1015,6 +1014,8 @@ static bool tcxml_px_element_(struct tcxml_parse_context_* restrict ctx)
         ctx->cbs->element_start(tag, ctx->bufs->attrs.ptr, ctx->bufs->attrs.len / 2, ctx->udata);
         tcxml_data_popn_(ctx->bufs, 1);
     }
+
+    tcxml_data_reset_(ctx->bufs); // (optional)
 
     tcxml_text_reset_(ctx->bufs);
     if(!tcxml_px_content_(ctx))
@@ -1089,7 +1090,7 @@ static bool tcxml_p_STag_(struct tcxml_parse_context_* restrict ctx)
         return TCXML_ERROR_("Expected '>' to end element");
 
     ctx->capture = name;
-    return true;
+    return true;    // return name in capture
 }
 
 /*

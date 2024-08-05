@@ -61,7 +61,7 @@ static void cb_text(tcxml_string_t text, size_t body_head, size_t body_tail, voi
         (unsigned int)(text.len - body_tail), text.ptr + body_tail
     );
 }
-static void cb_element_start(tcxml_string_t tag, tcxml_string_t const* attrs, size_t nattrs, void* udata)
+static void cb_element_start(tcxml_string_t tag, tcxml_string_t* attrs, size_t nattrs, void* udata)
 {
     printf("<" C_TAG "%s" C_RESET, tag.ptr);
     for(size_t i = 0; i < nattrs; i++)
