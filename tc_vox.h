@@ -2,19 +2,23 @@
  * tc_vox.h: MagicaVoxel *.vox file loader.
  *
  * DEPENDS:
- * VERSION: 0.1.0 (2023-07-30)
+ * VERSION: 0.2.0 (2024-10-23)
  * LICENSE: CC0 & Boost (dual-licensed)
  * AUTHOR: Tim Čas
  * URL: https://github.com/darkuranium/tclib
  *
  * VERSION HISTORY:
+ * 0.2.0    added rOBJ & IMAP chunk handling
+ *          fixed parsing of MATL chunks in some files (it appears that some files use a material ID of 0, and others use 256 for the same thing)
+ *          reworked a number of datastructures, transform-related logic is now based on tcvox_transform_t
+ *          added iterator, transform, and bounds APIs, to ease the loading of large (multi-model) files
  * 0.1.0    initial public release
  *
  * TODOS:
  * - Program & usage samples
  * - Better handling of versions other than 150 & 200
- * - rOBJ chunks (irrelevant for many uses)
- * - IMAP chunks (index map; seems to be relatively rare)
+ * - Make the iterator API support animations
+ * - Parse out common rOBJ types
  */
 
 #ifndef TC_VOX_H_
@@ -23,6 +27,14 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <math.h>
+
+#ifndef TC__STATIC_SIZE
+#if __STDC_VERSION__ >= 199901
+#define TC__STATIC_SIZE(N)  static N
+#else
+#define TC__STATIC_SIZE(N)  N
+#endif
+#endif
 
 typedef enum tcvox_material_type
 {
@@ -49,11 +61,36 @@ typedef struct tcvox_attr
     char* value;
 } tcvox_attr_t;
 
+typedef union tcvox_ivec3
+{
+    struct { int32_t x, y, z; };
+    int32_t xyz[3];
+} tcvox_ivec3_t;
+
+typedef struct tcvox_rotation_axis
+{
+    uint8_t index : 2;
+    uint8_t sign : 1;
+    uint8_t : 5;
+} tcvox_rotation_axis_t;
+
+typedef union tcvox_rotation
+{
+    struct { tcvox_rotation_axis_t x, y, z; };
+    tcvox_rotation_axis_t xyz[3];
+} tcvox_rotation_t;
+
+typedef struct tcvox_transform
+{
+    tcvox_rotation_t r;
+    tcvox_ivec3_t t;
+} tcvox_transform_t;
+
 typedef struct tcvox_material
 {
     tcvox_material_type_t type; // _type
     // roughness, index_of_refraction, and density seem to always be provided
-    // (probably an artefact of the materials keeping hidden values)
+    // (probably an artefact of the materials preserving hidden values)
     // METAL & GLASS:
     float roughness;            // _rough
     float index_of_refraction;  // 1 + _ior
@@ -89,14 +126,8 @@ typedef struct tcvox_frame
     tcvox_attr_t* attrs;
 
     // extracted from `attrs`
-    struct
-    {
-        uint8_t index: 2;
-        uint8_t sign: 1;
-        uint8_t : 7;
-    } r[3];         // rotation, 3x3 matrix
-    int32_t t[3];   // translation
-    uint32_t index; // frame index
+    tcvox_transform_t transform;    // via r & t
+    uint32_t index;     // frame index
 } tcvox_frame_t;
 
 typedef struct tcvox_voxel
@@ -108,7 +139,7 @@ typedef struct tcvox_voxel
 typedef struct tcvox_model
 {
     uint32_t id;
-    uint32_t size[3];
+    tcvox_ivec3_t size;
 
     uint32_t nvoxels;
     tcvox_voxel_t* voxels;
@@ -220,6 +251,15 @@ typedef struct tcvox_node_ref
     uint32_t type   : 2;
 } tcvox_node_ref_t;
 
+typedef struct tcvox_object
+{
+    uint32_t nattrs;
+    tcvox_attr_t* attrs;
+
+    // extracted from `attrs`
+    char* type;
+} tcvox_object_t;
+
 typedef struct tcvox_scene
 {
     const char* error;
@@ -235,8 +275,12 @@ typedef struct tcvox_scene
     uint32_t ncameras;
     tcvox_camera_t* cameras;
 
+    uint32_t nobjects;
+    tcvox_object_t* objects;
+
     struct
     {
+        // root node sits at index[0]
         uint32_t nindex;
         tcvox_node_ref_t* index;
 
@@ -251,14 +295,49 @@ typedef struct tcvox_scene
     } nodes;
 } tcvox_scene_t;
 
-// Provided publically in case it's useful.
+typedef struct tcvox_iter
+{
+    tcvox_scene_t* scene;
+    tcvox_shape_node_t* shape;
+    tcvox_transform_t transform;
+
+    bool include_hidden : 1;
+    bool is_finished : 1;
+
+// private data follows
+    struct
+    {
+        uint32_t mem, len;
+        struct tcvox_iter_stack_entry* ptr;
+    } _stack;
+    tcvox_shape_node_t* _pending_shape;
+} tcvox_iter_t;
+
+// Provided publicly in case it's useful.
 extern const tcvox_material_t tcvox_default_material_params;    // Default parameters if omitted.
 extern const tcvox_material_t tcvox_default_material;           // Default material in palette.
 extern const tcvox_palette_t tcvox_default_palette;
 
+extern const tcvox_transform_t tcvox_transform_identity;
+
 tcvox_scene_t* tcvox_load_memory(tcvox_scene_t* scene, const void* ptr, size_t length);
 tcvox_scene_t* tcvox_load_fname(tcvox_scene_t* scene, const char* fname);
 void tcvox_unload(const tcvox_scene_t* scene);
+
+// Combine a transform of `parent` followed by `child`.
+tcvox_transform_t tcvox_transform_combine(tcvox_transform_t parent, tcvox_transform_t child);
+// Apply a transform in `frame` to `vector`.
+tcvox_ivec3_t tcvox_transform_apply(tcvox_transform_t transform, tcvox_ivec3_t vector, bool apply_translation);
+// The returned matrix is row-major, i.e. mat3[row][col].
+void tcvox_rotation_to_mat3(tcvox_rotation_t rotation, int8_t mat3[TC__STATIC_SIZE(3)][3]);
+tcvox_rotation_t tcvox_rotation_combine(tcvox_rotation_t first, tcvox_rotation_t second);
+
+tcvox_iter_t tcvox_scene_iter_shapes(tcvox_scene_t* scene, bool include_hidden);
+bool tcvox_iter_next(tcvox_iter_t* it);
+void tcvox_iter_finish(tcvox_iter_t* it);   // Only required to be called if we want to terminate the iterator before it ends.
+
+// Compute a bounding box of the entire scene (min/max in each axis). Note that this does *not* inspect voxel data, but merely uses the outer boxes of each model/node.
+bool tcvox_scene_compute_bounds(tcvox_scene_t* scene, tcvox_ivec3_t bounds[TC__STATIC_SIZE(2)], bool include_hidden);
 
 #endif /* TC_VOX_H_ */
 
@@ -403,6 +482,15 @@ const tcvox_palette_t tcvox_default_palette = {{
     TCVOX_DEFAULT_MATERIAL_, TCVOX_DEFAULT_MATERIAL_, TCVOX_DEFAULT_MATERIAL_, TCVOX_DEFAULT_MATERIAL_, TCVOX_DEFAULT_MATERIAL_, TCVOX_DEFAULT_MATERIAL_, TCVOX_DEFAULT_MATERIAL_, TCVOX_DEFAULT_MATERIAL_,
 }};
 
+const tcvox_transform_t tcvox_transform_identity = {
+    .r = {{
+        {0, 0},
+        {1, 0},
+        {2, 0},
+    }},
+    .t = {{0, 0, 0}},
+};
+
 #define TCVOX_CHECK_(cond, msg) do { if(!(cond)) { error = (msg); goto error; } } while(0)
 #define TCVOX_ALLOC_CHECK_(ptr, num, name)      \
     do {                                        \
@@ -444,6 +532,18 @@ static const char* tcvox_read_bytes_(void* restrict dst, size_t nbytes, const vo
     return NULL;
 }
 #define TCVOX_READ_BYTES_(dst, nbytes, offset)   do { if((error = tcvox_read_bytes_(dst, nbytes, ptr, length, offset))) goto error; } while(0)
+
+static const char* tcvox_read_bytes_nocpy_(const uint8_t** restrict dst, size_t nbytes, const void* restrict ptr, size_t length, size_t offset)
+{
+    if(!(offset + nbytes <= length))
+        return "Out of bounds read (truncated file?)";
+
+    const uint8_t* restrict cptr = TC__VOID_CAST(const uint8_t* restrict,ptr);
+    *dst = &cptr[offset];
+
+    return NULL;
+}
+#define TCVOX_READ_BYTES_NOCPY_(dst, nbytes, offset)   do { if((error = tcvox_read_bytes_nocpy_(dst, nbytes, ptr, length, offset))) goto error; } while(0)
 
 static const char* tcvox_read_32le_(uint32_t* restrict dst, const void* restrict ptr, size_t length, size_t offset)
 {
@@ -500,7 +600,7 @@ error:
 #define TCVOX_IS_KEY_(S)    (klen == sizeof(#S) - 1U && !memcmp(key, #S, sizeof(#S) - 1U))
 #define TCVOX_IS_VAL_(S)    (vlen == sizeof(#S) - 1U && !memcmp(val, #S, sizeof(#S) - 1U))
 
-// Main function. TODO: rOBJ, IMAP
+// Main function.
 static const char* tcvox_load_memory_(tcvox_scene_t* scene, const void* ptr, size_t length)
 {
     const char* error;
@@ -549,6 +649,9 @@ static const char* tcvox_load_memory_(tcvox_scene_t* scene, const void* ptr, siz
         case TCVOX_TAG_('r','C','A','M'):
             ++scene->ncameras;
             break;
+        case TCVOX_TAG_('r','O','B','J'):
+            ++scene->nobjects;
+            break;
         }
         offset = c.offset_end;
     }
@@ -562,6 +665,7 @@ static const char* tcvox_load_memory_(tcvox_scene_t* scene, const void* ptr, siz
     TCVOX_ALLOC_CHECK_(scene->models, scene->nmodels, "models");
     TCVOX_ALLOC_CHECK_(scene->layers, scene->nlayers, "layers");
     TCVOX_ALLOC_CHECK_(scene->cameras, scene->ncameras, "cameras");
+    TCVOX_ALLOC_CHECK_(scene->objects, scene->nobjects, "objects");
 
     scene->nodes.nindex = scene->nodes.ngroups + scene->nodes.nshapes + scene->nodes.ntransforms;
     TCVOX_ALLOC_CHECK_(scene->nodes.index, scene->nodes.nindex, "nodes index");
@@ -570,6 +674,7 @@ static const char* tcvox_load_memory_(tcvox_scene_t* scene, const void* ptr, siz
     TCVOX_ALLOC_CHECK_(scene->nodes.transforms, scene->nodes.ntransforms, "transform nodes");
 
     tcvox_model_t* model;
+    tcvox_object_t* object;
     tcvox_group_node_t* group;
     tcvox_shape_node_t* shape;
     tcvox_transform_node_t* transform;
@@ -638,8 +743,30 @@ static const char* tcvox_load_memory_(tcvox_scene_t* scene, const void* ptr, siz
         offset = c.offset_end;
     }
 
+    // Handle IMAP chunks properly, by keeping track of a remapping table. The default table is a simple identity mapping.
+    static const uint8_t imap_identity[256] = {
+          0,   1,   2,   3,   4,   5,   6,   7,   8,   9,  10,  11,  12,  13,  14,  15,
+         16,  17,  18,  19,  20,  21,  22,  23,  24,  25,  26,  27,  28,  29,  30,  31,
+         32,  33,  34,  35,  36,  37,  38,  39,  40,  41,  42,  43,  44,  45,  46,  47,
+         48,  49,  50,  51,  52,  53,  54,  55,  56,  57,  58,  59,  60,  61,  62,  63,
+         64,  65,  66,  67,  68,  69,  70,  71,  72,  73,  74,  75,  76,  77,  78,  79,
+         80,  81,  82,  83,  84,  85,  86,  87,  88,  89,  90,  91,  92,  93,  94,  95,
+         96,  97,  98,  99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111,
+        112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127,
+        128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143,
+        144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159,
+        160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175,
+        176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191,
+        192, 193, 194, 195, 196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 206, 207,
+        208, 209, 210, 211, 212, 213, 214, 215, 216, 217, 218, 219, 220, 221, 222, 223,
+        224, 225, 226, 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239,
+        240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255,
+    };
+    const uint8_t* imap = imap_identity;
+
     // Perform final read.
     model = &scene->models[0];
+    object = &scene->objects[0];
     group = &scene->nodes.groups[0];
     shape = &scene->nodes.shapes[0];
     transform = &scene->nodes.transforms[0];
@@ -660,8 +787,10 @@ static const char* tcvox_load_memory_(tcvox_scene_t* scene, const void* ptr, siz
             TCVOX_CHECK_(c.nbytes_data == 3 * sizeof(uint32_t), "Invalid SIZE chunk length");
             for(size_t i = 0; i < 3; i++)
             {
-                TCVOX_READ_32LE_(&model->size[i], c.offset_data + i * sizeof(uint32_t));
-                TCVOX_CHECK_(model->size[i], "Zero-sized model");   // TODO: simply ignore such models, instead of erroring on them?
+                uint32_t s = 0;
+                TCVOX_READ_32LE_(&s, c.offset_data + i * sizeof(uint32_t));
+                model->size.xyz[i] = s;
+                TCVOX_CHECK_(model->size.xyz[i], "Zero-sized model");   // TODO: Should we simply ignore such models, instead of erroring on them?
             }
 
             model->id = model - scene->models;
@@ -671,7 +800,7 @@ static const char* tcvox_load_memory_(tcvox_scene_t* scene, const void* ptr, siz
             TCVOX_CHECK_(model - scene->models < scene->nmodels
                       && !model->voxels, "Too many XYZI blocks in file");
 
-            TCVOX_CHECK_(model->size[0] && model->size[1] && model->size[2], "XYZI chunk must follow SIZE chunk");
+            TCVOX_CHECK_(model->size.x && model->size.y && model->size.z, "XYZI chunk must follow SIZE chunk");
             TCVOX_READ_32LE_(&model->nvoxels, c.offset_data + 0 * sizeof(uint32_t));
             TCVOX_CHECK_(c.nbytes_data >= sizeof(uint32_t) + model->nvoxels * sizeof(uint32_t), "Invalid XYZI chunk size (truncated chunk?)");
 
@@ -742,10 +871,10 @@ static const char* tcvox_load_memory_(tcvox_scene_t* scene, const void* ptr, siz
 
                 // initialize values to defaults
                 for(size_t i = 0; i < 3; i++)
-                    frame->r[i].index = i;
-                //frame->[i].sign is already okay   (0)
-                //frame->t is already okay          (0 0 0)
-                //frame->index is already okay      (0)
+                    frame->transform.r.xyz[i].index = i;
+                //frame->r.xyz[i].sign is already okay  (0)
+                //frame->t is already okay              (0 0 0)
+                //frame->index is already okay          (0)
 
                 for(size_t a = 0; a < frame->nattrs; a++)
                 {
@@ -758,22 +887,22 @@ static const char* tcvox_load_memory_(tcvox_scene_t* scene, const void* ptr, siz
                     if(TCVOX_IS_KEY_(_r))
                     {
                         uint8_t r = strtoul(frame->attrs[a].value, NULL, 10);
-                        frame->r[0].index = (r >> 0) & 3;
-                        frame->r[1].index = (r >> 2) & 3;
+                        frame->transform.r.x.index = (r >> 0) & 3;
+                        frame->transform.r.y.index = (r >> 2) & 3;
                         // this computes the remaining index:
                         // ~(0 | 1) == ~(0b00 | 0b01) == 0b10 == 2
                         // ~(0 | 2) == ~(0b00 | 0b10) == 0b01 == 1
                         // ~(1 | 2) == ~(0b01 | 0b10) == 0b00 == 0
-                        frame->r[2].index = ~(frame->r[0].index | frame->r[1].index);
-                        frame->r[0].sign = (r >> 4) & 1;
-                        frame->r[1].sign = (r >> 5) & 1;
-                        frame->r[2].sign = (r >> 6) & 1;
+                        frame->transform.r.z.index = ~(frame->transform.r.x.index | frame->transform.r.y.index);
+                        frame->transform.r.x.sign = (r >> 4) & 1;
+                        frame->transform.r.y.sign = (r >> 5) & 1;
+                        frame->transform.r.z.sign = (r >> 6) & 1;
                     }
                     else if(TCVOX_IS_KEY_(_t))
                     {
                         char* end = frame->attrs[a].value;
                         for(size_t i = 0; i < 3; i++)
-                            frame->t[i] = strtol(end, &end, 10);
+                            frame->transform.t.xyz[i] = strtol(end, &end, 10);
                     }
                     else if(TCVOX_IS_KEY_(_f))
                         frame->index = strtoul(frame->attrs[a].value, NULL, 10);
@@ -910,21 +1039,26 @@ static const char* tcvox_load_memory_(tcvox_scene_t* scene, const void* ptr, siz
             } break;
 
         case TCVOX_TAG_('r','O','B','J'): {
-            /*uint32_t nattrs;
-            TCVOX_READ_32LE_(&nattrs, c.offset_data + 0 * sizeof(uint32_t));
+            // We count above, so this should always pass
+            assert(object - scene->objects < scene->nobjects);
+
+            TCVOX_READ_32LE_(&object->nattrs, c.offset_data + 0 * sizeof(uint32_t));
             uint32_t ioffset = c.offset_data + 1 * sizeof(uint32_t);
 
-            printf("rOBJ:\n");
-            for(size_t a = 0; a < nattrs; a++)
+            TCVOX_ALLOC_CHECK_(object->attrs, object->nattrs, "object attributes");
+            for(size_t a = 0; a < object->nattrs; a++)
             {
                 const char* key; uint32_t klen;
                 const char* val; uint32_t vlen;
                 TCVOX_READ_STRING_NOCPY_(&key, &klen, ioffset); ioffset += sizeof(uint32_t) + klen;
                 TCVOX_READ_STRING_NOCPY_(&val, &vlen, ioffset); ioffset += sizeof(uint32_t) + vlen;
+                TCVOX_MAKE_ATTR_(&object->attrs[a]);
 
-                printf("\t%.*s = %.*s\n", klen, key, vlen, val);
-            }*/
+                if(TCVOX_IS_KEY_(_type))
+                    object->type = object->attrs[a].value;
+            }
 
+            ++object;
             } break;
 
         case TCVOX_TAG_('r','C','A','M'): {
@@ -979,16 +1113,22 @@ static const char* tcvox_load_memory_(tcvox_scene_t* scene, const void* ptr, siz
         case TCVOX_TAG_('R','G','B','A'):
             TCVOX_CHECK_(c.nbytes_data == 4 * 256, "Invalid RGBA chunk length");
             //scene->palette.abgr[0] = 0x00000000;  // set in `default_palette` already
-            // colors are offset by 1, hence `+1` & `255`.
+            // colors are offset by 1, hence `i + 1` & `i < 255`.
             for(size_t i = 0; i < 255; i++)
                 TCVOX_READ_32LE_(&scene->palette.abgr[i + 1], c.offset_data + i * sizeof(uint32_t));
+            break;
+
+        case TCVOX_TAG_('I','M','A','P'):
+            TCVOX_CHECK_(c.nbytes_data == 256, "Invalid IMAP chunk length");
+            // No need to copy as we don't keep this information in the output --- simply keep a pointer to the file data at the relevant offset.
+            TCVOX_READ_BYTES_NOCPY_(&imap, 256, c.offset_data);
             break;
 
         case TCVOX_TAG_('M','A','T','L'): {
             uint32_t id, npairs;
             TCVOX_READ_32LE_(&id, c.offset_data + 0 * sizeof(uint32_t));
-            TCVOX_CHECK_(0 < id && id <= 256, "Invalid material index in MATL chunk");
-            id &= 255;  // material 255 becomes 0
+            TCVOX_CHECK_(0 <= id && id <= 256, "Invalid material index in MATL chunk");
+            id &= 255;  // material 256 becomes 0 (some files use 256, some use 0)
 
             tcvox_material_t* mtl = &scene->palette.materials[id];
             *mtl = tcvox_default_material_params;
@@ -1250,5 +1390,215 @@ void tcvox_unload(const tcvox_scene_t* scene)
         free(scene->nodes.transforms);
     }
 }
+
+tcvox_transform_t tcvox_transform_combine(tcvox_transform_t parent, tcvox_transform_t child)
+{
+    return (tcvox_transform_t){
+        .r = tcvox_rotation_combine(parent.r, child.r),
+        .t = tcvox_transform_apply(parent, child.t, true),
+    };
+}
+
+tcvox_ivec3_t tcvox_transform_apply(tcvox_transform_t transform, tcvox_ivec3_t vector, bool apply_translation)
+{
+    tcvox_ivec3_t result;
+
+    assert((1 << transform.r.xyz[0].index | 1 << transform.r.xyz[1].index | 1 << transform.r.xyz[2].index) == 0x7 && "Invalid rotation indices (uninitialized rotation?)");
+    for(size_t i = 0; i < 3; i++)
+    {
+        int32_t coord = vector.xyz[i];
+        if(transform.r.xyz[i].sign) coord = -coord;
+        result.xyz[transform.r.xyz[i].index] = coord;
+    }
+
+    if(apply_translation)
+        for(size_t i = 0; i < 3; i++)
+            result.xyz[i] += transform.t.xyz[i];
+
+    return result;
+}
+
+void tcvox_rotation_to_mat3(tcvox_rotation_t rotation, int8_t mat3[TC__STATIC_SIZE(3)][3])
+{
+    assert((1 << rotation.xyz[0].index | 1 << rotation.xyz[1].index | 1 << rotation.xyz[2].index) == 0x7 && "Invalid rotation indices (uninitialized rotation?)");
+
+    memset(mat3, 0, 3 * 3 * sizeof(int8_t));
+    for(size_t i = 0; i < 3; i++)
+        mat3[i][rotation.xyz[i].index] = rotation.xyz[i].sign ? -1 : +1;
+}
+
+tcvox_rotation_t tcvox_rotation_combine(tcvox_rotation_t first, tcvox_rotation_t second)
+{
+    assert((1 << first.xyz[0].index | 1 << first.xyz[1].index | 1 << first.xyz[2].index) == 0x7 && "Invalid rotation indices (uninitialized rotation?)");
+    assert((1 << second.xyz[0].index | 1 << second.xyz[1].index | 1 << second.xyz[2].index) == 0x7 && "Invalid rotation indices (uninitialized rotation?)");
+
+    tcvox_rotation_t result;
+    for(size_t i = 0; i < 3; i++)
+    {
+        tcvox_rotation_axis_t axis = second.xyz[i];
+        axis.sign ^= first.xyz[i].sign;
+        result.xyz[first.xyz[i].index] = axis;
+    }
+
+    return result;
+}
+
+
+struct tcvox_iter_stack_entry
+{
+    tcvox_transform_t transform;
+    tcvox_group_node_t* group;
+    uint32_t next_child;
+};
+static bool tcvox_iter_stack_push_(tcvox_iter_t* it, const struct tcvox_iter_stack_entry* entry)
+{
+    if(it->_stack.len + 1 >= it->_stack.mem)
+    {
+        it->_stack.mem = it->_stack.mem ? it->_stack.mem << 1 : 4;
+        struct tcvox_iter_stack_entry* nptr = realloc(it->_stack.ptr, it->_stack.mem * sizeof(*it->_stack.ptr));
+        if(!nptr)   // out of memory
+        {
+            tcvox_iter_finish(it);
+            return false;
+        }
+        it->_stack.ptr = nptr;
+    }
+    it->_stack.ptr[it->_stack.len++] = *entry;
+    return true;
+}
+static bool tcvox_iter_stack_push_group_(tcvox_iter_t* it, tcvox_group_node_t* group)
+{
+    struct tcvox_iter_stack_entry entry = {
+        .transform = it->transform,
+        .group = group,
+        .next_child = 0,
+    };
+    return tcvox_iter_stack_push_(it, &entry);
+}
+static bool tcvox_iter_stack_push_transform_(tcvox_iter_t* it, tcvox_transform_node_t* transform)
+{
+    if(!it->include_hidden
+    && (transform->is_hidden || (transform->layer && transform->layer->is_hidden)))
+        return true;
+
+    it->transform = tcvox_transform_combine(it->transform, transform->frames[0].transform);
+    if(transform->child.group)
+        return tcvox_iter_stack_push_group_(it, transform->child.group);
+    else if(transform->child.shape)
+    {
+        assert(!it->_pending_shape);
+        it->_pending_shape = transform->child.shape;
+        return true;
+    }
+    else
+        return true;    // TODO: return false here or assert?
+}
+static void tcvox_iter_stack_pop_(tcvox_iter_t* it)
+{
+    assert(it->_stack.len);
+    --it->_stack.len;
+
+    it->transform = it->_stack.len ? it->_stack.ptr[it->_stack.len - 1].transform : tcvox_transform_identity;
+}
+
+tcvox_iter_t tcvox_scene_iter_shapes(tcvox_scene_t* scene, bool include_hidden)
+{
+    tcvox_iter_t it = {
+        .scene = scene,
+        .transform = tcvox_transform_identity,
+        .include_hidden = include_hidden,
+    };
+    if(!scene->nodes.nshapes)   // zero shapes => we're done immediately
+        return it;
+
+    tcvox_node_ref_t ref = scene->nodes.index[0];
+    switch(ref.type)
+    {
+        case TCVOX_NODE_REF_TYPE_GROUP:
+            tcvox_iter_stack_push_group_(&it, &scene->nodes.groups[ref.index]);
+            break;
+        case TCVOX_NODE_REF_TYPE_TRANSFORM:
+            tcvox_iter_stack_push_transform_(&it, &scene->nodes.transforms[ref.index]);
+            break;
+        case TCVOX_NODE_REF_TYPE_SHAPE:
+            it._pending_shape = &scene->nodes.shapes[ref.index];
+            break;
+    }
+    return it;
+}
+
+bool tcvox_iter_next(tcvox_iter_t* it)
+{
+    assert(!it->is_finished && "Called tcvox_iter_next after the iterator finished");
+
+    for(;;)
+    {
+        if(it->_pending_shape)
+        {
+            it->shape = it->_pending_shape;
+            it->_pending_shape = NULL;
+            return true;
+        }
+
+        if(!it->_stack.len)
+            break;
+
+        struct tcvox_iter_stack_entry* entry = &it->_stack.ptr[it->_stack.len - 1];
+        if(entry->next_child >= entry->group->nchildren)
+        {
+            tcvox_iter_stack_pop_(it);
+            continue;
+        }
+        tcvox_iter_stack_push_transform_(it, entry->group->children[entry->next_child++]);
+    }
+
+    tcvox_iter_finish(it);
+    return false;
+}
+
+void tcvox_iter_finish(tcvox_iter_t* it)
+{
+    if(it->is_finished)
+        return;
+    it->is_finished = true;
+
+    it->shape = NULL;
+    if(it->_stack.ptr) free(it->_stack.ptr);
+}
+
+
+bool tcvox_scene_compute_bounds(tcvox_scene_t* scene, tcvox_ivec3_t bounds[TC__STATIC_SIZE(2)], bool include_hidden)
+{
+    for(size_t i = 0; i < 3; i++)
+    {
+        bounds[0].xyz[i] = INT32_MAX;
+        bounds[1].xyz[i] = INT32_MIN;
+    }
+
+    tcvox_iter_t it = tcvox_scene_iter_shapes(scene, include_hidden);
+    if(it.is_finished)  // out-of-memory
+        return false;
+    while(tcvox_iter_next(&it))
+    {
+        tcvox_ivec3_t v = it.transform.t;
+        for(size_t i = 0; i < 3; i++)
+        {
+            if(v.xyz[i] < bounds[0].xyz[i]) bounds[0].xyz[i] = v.xyz[i];
+            if(bounds[1].xyz[i] < v.xyz[i]) bounds[1].xyz[i] = v.xyz[i];
+        }
+
+        for(size_t m = 0; m < it.shape->nmodels; m++)
+        {
+            v = tcvox_transform_apply(it.transform, it.shape->models[m].model->size, true);
+            for(size_t i = 0; i < 3; i++)
+            {
+                if(v.xyz[i] < bounds[0].xyz[i]) bounds[0].xyz[i] = v.xyz[i];
+                if(bounds[1].xyz[i] < v.xyz[i]) bounds[1].xyz[i] = v.xyz[i];
+            }
+        }
+    }
+    return true;
+}
+
 
 #endif /* TC_VOX_IMPLEMENTATION */
