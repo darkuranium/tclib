@@ -24,6 +24,7 @@
 #ifndef TC_VOX_H_
 #define TC_VOX_H_
 
+#include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
 #include <math.h>
