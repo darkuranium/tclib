@@ -2,13 +2,14 @@
  * tc_vox.h: MagicaVoxel *.vox file loader.
  *
  * DEPENDS:
- * VERSION: 0.2.0 (2024-10-23)
+ * VERSION: 0.2.1 (2024-10-23)
  * LICENSE: CC0 & Boost (dual-licensed)
  * AUTHOR: Tim Čas
  * URL: https://github.com/darkuranium/tclib
  *
  * VERSION HISTORY:
  * 0.2.1    properly handle "simple" .vox files, i.e. those without nodes but only model(s)
+ *          fix an issue with transforms not being properly reset when we finish iterating a node
  * 0.2.0    added rOBJ & IMAP chunk handling
  *          fixed parsing of MATL chunks in some files (it appears that some files use a material ID of 0, and others use 256 for the same thing)
  *          reworked a number of datastructures, transform-related logic is now based on tcvox_transform_t
@@ -1527,8 +1528,6 @@ static void tcvox_iter_stack_pop_(tcvox_iter_t* it)
 {
     assert(it->_stack.len);
     --it->_stack.len;
-
-    it->transform = it->_stack.len ? it->_stack.ptr[it->_stack.len - 1].transform : tcvox_transform_identity;
 }
 
 tcvox_iter_t tcvox_scene_iter_shapes(tcvox_scene_t* scene, bool include_hidden)
@@ -1574,6 +1573,8 @@ bool tcvox_iter_next(tcvox_iter_t* it)
             break;
 
         struct tcvox_iter_stack_entry* entry = &it->_stack.ptr[it->_stack.len - 1];
+        it->transform = entry->transform;
+
         if(entry->next_child >= entry->group->nchildren)
         {
             tcvox_iter_stack_pop_(it);
