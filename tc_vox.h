@@ -2,13 +2,15 @@
  * tc_vox.h: MagicaVoxel *.vox file loader.
  *
  * DEPENDS:
- * VERSION: 0.2.0 (2024-10-23)
+ * VERSION: 0.3.0 (2025-11-04)
  * LICENSE: CC0 & Boost (dual-licensed)
  * AUTHOR: Tim Čas
  * URL: https://github.com/darkuranium/tclib
  *
  * VERSION HISTORY:
+ * 0.3.0    fix rotation handling to match the behaviour of MagicaVoxel (and presumably the intended behaviour of the file format)
  * 0.2.1    properly handle "simple" .vox files, i.e. those without nodes but only model(s)
+ *          fix an issue with transforms not being properly reset when we finish iterating a node
  * 0.2.0    added rOBJ & IMAP chunk handling
  *          fixed parsing of MATL chunks in some files (it appears that some files use a material ID of 0, and others use 256 for the same thing)
  *          reworked a number of datastructures, transform-related logic is now based on tcvox_transform_t
@@ -17,7 +19,7 @@
  *
  * TODOS:
  * - Program & usage samples
- * - Better handling of versions other than 150 & 200
+ * - Better handling of file versions other than 150 & 200
  * - Make the iterator API support animations
  * - Parse out common rOBJ types
  */
@@ -310,7 +312,7 @@ typedef struct tcvox_iter
     tcvox_transform_t transform;
 
     bool include_hidden : 1;
-    bool is_finished : 1;
+    bool done : 1;
 
 // private data follows
     struct
@@ -320,6 +322,13 @@ typedef struct tcvox_iter
     } _stack;
     tcvox_shape_node_t* _pending_shape;
 } tcvox_iter_t;
+
+typedef enum tcvox_compute_bounds_flags
+{
+    TCVOX_BOUNDSFLG_INCLUDE_HIDDEN      = 1 << 0,
+    TCVOX_BOUNDSFLG_POINT_CLOUD_MODE    = 1 << 1,
+    TCVOX_BOUNDSFLG_IGNORE_EMPTY        = 1 << 2,
+} tcvox_compute_bounds_flags_t;
 
 // Provided publicly in case it's useful.
 extern const tcvox_material_t tcvox_default_material_params;    // Default parameters if omitted.
@@ -336,6 +345,9 @@ void tcvox_unload(const tcvox_scene_t* scene);
 tcvox_transform_t tcvox_transform_combine(tcvox_transform_t parent, tcvox_transform_t child);
 // Apply a transform in `frame` to `vector`.
 tcvox_ivec3_t tcvox_transform_apply(tcvox_transform_t transform, tcvox_ivec3_t vector, bool apply_translation);
+// Same as `tcvox_transform_apply`, but it works on voxel / point cloud coordinates. TODO: This needs a better name.
+tcvox_ivec3_t tcvox_transform_apply_voxel_vec(tcvox_transform_t transform, tcvox_ivec3_t vector, bool apply_translation);
+tcvox_ivec3_t tcvox_transform_apply_voxel(tcvox_transform_t transform, tcvox_voxel_t voxel, bool apply_translation);
 // The returned matrix is row-major, i.e. mat3[row][col].
 void tcvox_rotation_to_mat3(tcvox_rotation_t rotation, int8_t mat3[TC__STATIC_SIZE(3)][3]);
 tcvox_rotation_t tcvox_rotation_combine(tcvox_rotation_t first, tcvox_rotation_t second);
@@ -344,8 +356,11 @@ tcvox_iter_t tcvox_scene_iter_shapes(tcvox_scene_t* scene, bool include_hidden);
 bool tcvox_iter_next(tcvox_iter_t* it);
 void tcvox_iter_finish(tcvox_iter_t* it);   // Only required to be called if we want to terminate the iterator before it ends.
 
+// Helper functions, exposed because they might be useful for manual bounds calculation.
+void tcvox_bounds_init(tcvox_ivec3_t bounds[TC__STATIC_SIZE(2)]);
+void tcvox_bounds_update(tcvox_ivec3_t bounds[TC__STATIC_SIZE(2)], tcvox_ivec3_t v);
 // Compute a bounding box of the entire scene (min/max in each axis). Note that this does *not* inspect voxel data, but merely uses the outer boxes of each model/node.
-bool tcvox_scene_compute_bounds(tcvox_scene_t* scene, tcvox_ivec3_t bounds[TC__STATIC_SIZE(2)], bool include_hidden);
+bool tcvox_scene_compute_bounds(tcvox_scene_t* scene, tcvox_ivec3_t bounds[TC__STATIC_SIZE(2)], tcvox_compute_bounds_flags_t flags);
 
 #endif /* TC_VOX_H_ */
 
@@ -1141,11 +1156,6 @@ static const char* tcvox_load_memory_(tcvox_scene_t* scene, const void* ptr, siz
             tcvox_material_t* mtl = &scene->palette.materials[id];
             *mtl = tcvox_default_material_params;
 
-            /*printf("mtl %u: %u %u %u\n", id,
-                (scene->palette.abgr[id] >> 0) & 0xFF,
-                (scene->palette.abgr[id] >> 8) & 0xFF,
-                (scene->palette.abgr[id] >> 16) & 0xFF);*/
-
             TCVOX_READ_32LE_(&npairs, c.offset_data + 1 * sizeof(uint32_t));
             uint32_t ioffset = c.offset_data + 2 * sizeof(uint32_t);
             for(size_t p = 0; p < npairs; p++)
@@ -1209,8 +1219,6 @@ static const char* tcvox_load_memory_(tcvox_scene_t* scene, const void* ptr, siz
                     mtl->raw.flux = 1.0f + strtof(val, NULL);
                 else if(TCVOX_IS_KEY_(_ldr))
                     mtl->raw.ldr = strtof(val, NULL);
-
-                //printf("\t%.*s = %.*s\n", klen, key, vlen, val);
             }
 
             mtl->emissiveness = mtl->raw.emit * powf(10.0f, mtl->raw.flux) + mtl->raw.ldr;
@@ -1251,16 +1259,6 @@ static const char* tcvox_load_memory_(tcvox_scene_t* scene, const void* ptr, siz
             } break;
 
         default:
-            /*printf("%.4s:\n", (const char*)&c.tag);
-
-            for(uint32_t i = 0; i < c.nbytes_data; i++)
-                printf("%.2X", ((unsigned char*)ptr)[c.offset_data + i]);
-            printf("\n");
-
-            for(uint32_t i = 0; i < c.nbytes_data; i++)
-                printf("%c", ((unsigned char*)ptr)[c.offset_data + i]);
-            printf("\n");*/
-
             break;
         }
 
@@ -1436,9 +1434,9 @@ tcvox_ivec3_t tcvox_transform_apply(tcvox_transform_t transform, tcvox_ivec3_t v
     assert((1 << transform.r.xyz[0].index | 1 << transform.r.xyz[1].index | 1 << transform.r.xyz[2].index) == 0x7 && "Invalid rotation indices (uninitialized rotation?)");
     for(size_t i = 0; i < 3; i++)
     {
-        int32_t coord = vector.xyz[i];
+        int32_t coord = vector.xyz[transform.r.xyz[i].index];
         if(transform.r.xyz[i].sign) coord = -coord;
-        result.xyz[transform.r.xyz[i].index] = coord;
+        result.xyz[i] = coord;
     }
 
     if(apply_translation)
@@ -1446,6 +1444,26 @@ tcvox_ivec3_t tcvox_transform_apply(tcvox_transform_t transform, tcvox_ivec3_t v
             result.xyz[i] += transform.t.xyz[i];
 
     return result;
+}
+
+tcvox_ivec3_t tcvox_transform_apply_voxel_vec(tcvox_transform_t transform, tcvox_ivec3_t vector, bool apply_translation)
+{
+    // This strange logic emulates MagicaVoxel's coordinate handling (determined via blackbox testing).
+    // Essentially, we convert to 32p1 fixed-point and subtract `0.5` in each direction.
+    // Author note: Adding would make more sense (so that each object's bbox start is at [0,0,0]), but this is the logic the format uses.
+    for(size_t i = 0; i < 3; i++)
+    {
+        transform.t.xyz[i] = transform.t.xyz[i] * 2 - 1;
+        vector.xyz[i] = vector.xyz[i] * 2 - 1;
+    }
+    tcvox_ivec3_t result = tcvox_transform_apply(transform, vector, apply_translation);
+    for(size_t i = 0; i < 3; i++)
+        result.xyz[i] = result.xyz[i] / 2;
+    return result;
+}
+tcvox_ivec3_t tcvox_transform_apply_voxel(tcvox_transform_t transform, tcvox_voxel_t voxel, bool apply_translation)
+{
+    return tcvox_transform_apply_voxel_vec(transform, (tcvox_ivec3_t){{ voxel.xyz[0], voxel.xyz[1], voxel.xyz[2] }}, apply_translation);
 }
 
 void tcvox_rotation_to_mat3(tcvox_rotation_t rotation, int8_t mat3[TC__STATIC_SIZE(3)][3])
@@ -1465,9 +1483,9 @@ tcvox_rotation_t tcvox_rotation_combine(tcvox_rotation_t first, tcvox_rotation_t
     tcvox_rotation_t result;
     for(size_t i = 0; i < 3; i++)
     {
-        tcvox_rotation_axis_t axis = second.xyz[i];
+        tcvox_rotation_axis_t axis = second.xyz[first.xyz[i].index];
         axis.sign ^= first.xyz[i].sign;
-        result.xyz[first.xyz[i].index] = axis;
+        result.xyz[i] = axis;
     }
 
     return result;
@@ -1527,8 +1545,6 @@ static void tcvox_iter_stack_pop_(tcvox_iter_t* it)
 {
     assert(it->_stack.len);
     --it->_stack.len;
-
-    it->transform = it->_stack.len ? it->_stack.ptr[it->_stack.len - 1].transform : tcvox_transform_identity;
 }
 
 tcvox_iter_t tcvox_scene_iter_shapes(tcvox_scene_t* scene, bool include_hidden)
@@ -1559,7 +1575,7 @@ tcvox_iter_t tcvox_scene_iter_shapes(tcvox_scene_t* scene, bool include_hidden)
 
 bool tcvox_iter_next(tcvox_iter_t* it)
 {
-    assert(!it->is_finished && "Called tcvox_iter_next after the iterator finished");
+    assert(!it->done && "Called tcvox_iter_next after the iterator finished");
 
     for(;;)
     {
@@ -1574,6 +1590,8 @@ bool tcvox_iter_next(tcvox_iter_t* it)
             break;
 
         struct tcvox_iter_stack_entry* entry = &it->_stack.ptr[it->_stack.len - 1];
+        it->transform = entry->transform;
+
         if(entry->next_child >= entry->group->nchildren)
         {
             tcvox_iter_stack_pop_(it);
@@ -1588,43 +1606,57 @@ bool tcvox_iter_next(tcvox_iter_t* it)
 
 void tcvox_iter_finish(tcvox_iter_t* it)
 {
-    if(it->is_finished)
+    if(it->done)
         return;
-    it->is_finished = true;
+    it->done = true;
 
     it->shape = NULL;
     if(it->_stack.ptr) free(it->_stack.ptr);
 }
 
-
-bool tcvox_scene_compute_bounds(tcvox_scene_t* scene, tcvox_ivec3_t bounds[TC__STATIC_SIZE(2)], bool include_hidden)
+void tcvox_bounds_init(tcvox_ivec3_t bounds[TC__STATIC_SIZE(2)])
 {
     for(size_t i = 0; i < 3; i++)
     {
         bounds[0].xyz[i] = INT32_MAX;
         bounds[1].xyz[i] = INT32_MIN;
     }
+}
 
-    tcvox_iter_t it = tcvox_scene_iter_shapes(scene, include_hidden);
-    if(it.is_finished)  // out-of-memory
+void tcvox_bounds_update(tcvox_ivec3_t bounds[TC__STATIC_SIZE(2)], tcvox_ivec3_t v)
+{
+    for(size_t i = 0; i < 3; i++)
+    {
+        if(v.xyz[i] < bounds[0].xyz[i]) bounds[0].xyz[i] = v.xyz[i];
+        if(bounds[1].xyz[i] < v.xyz[i]) bounds[1].xyz[i] = v.xyz[i];
+    }
+}
+
+bool tcvox_scene_compute_bounds(tcvox_scene_t* scene, tcvox_ivec3_t bounds[TC__STATIC_SIZE(2)], tcvox_compute_bounds_flags_t flags)
+{
+    tcvox_bounds_init(bounds);
+
+    tcvox_iter_t it = tcvox_scene_iter_shapes(scene, !!(flags & TCVOX_BOUNDSFLG_INCLUDE_HIDDEN));
+    if(it.done) // out-of-memory
         return false;
     while(tcvox_iter_next(&it))
     {
-        tcvox_ivec3_t v = it.transform.t;
-        for(size_t i = 0; i < 3; i++)
-        {
-            if(v.xyz[i] < bounds[0].xyz[i]) bounds[0].xyz[i] = v.xyz[i];
-            if(bounds[1].xyz[i] < v.xyz[i]) bounds[1].xyz[i] = v.xyz[i];
-        }
+        if((flags & TCVOX_BOUNDSFLG_IGNORE_EMPTY) && !it.shape->nmodels)
+            continue;
+
+        tcvox_ivec3_t v = {{0,0,0}};
+        v = (flags & TCVOX_BOUNDSFLG_POINT_CLOUD_MODE)
+          ? tcvox_transform_apply_voxel_vec(it.transform, v, true)
+          : tcvox_transform_apply(it.transform, v, true);
+        tcvox_bounds_update(bounds, v);
 
         for(size_t m = 0; m < it.shape->nmodels; m++)
         {
-            v = tcvox_transform_apply(it.transform, it.shape->models[m].model->size, true);
-            for(size_t i = 0; i < 3; i++)
-            {
-                if(v.xyz[i] < bounds[0].xyz[i]) bounds[0].xyz[i] = v.xyz[i];
-                if(bounds[1].xyz[i] < v.xyz[i]) bounds[1].xyz[i] = v.xyz[i];
-            }
+            v = it.shape->models[m].model->size;
+            v = (flags & TCVOX_BOUNDSFLG_POINT_CLOUD_MODE)
+              ? tcvox_transform_apply_voxel_vec(it.transform, (tcvox_ivec3_t){{ v.x - 1, v.y - 1, v.z - 1 }}, true)
+              : tcvox_transform_apply(it.transform, v, true);
+            tcvox_bounds_update(bounds, v);
         }
     }
     return true;
