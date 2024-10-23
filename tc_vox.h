@@ -8,6 +8,7 @@
  * URL: https://github.com/darkuranium/tclib
  *
  * VERSION HISTORY:
+ * 0.2.1    properly handle "simple" .vox files, i.e. those without nodes but only model(s)
  * 0.2.0    added rOBJ & IMAP chunk handling
  *          fixed parsing of MATL chunks in some files (it appears that some files use a material ID of 0, and others use 256 for the same thing)
  *          reworked a number of datastructures, transform-related logic is now based on tcvox_transform_t
@@ -279,6 +280,12 @@ typedef struct tcvox_scene
     uint32_t nobjects;
     tcvox_object_t* objects;
 
+    /*
+        `true` if file had no nodes whatsoever.
+        Note that if it had at least 1 model, we'll create a single shape (`index[0]` & `shapes[0]`) containing all the models.
+        This keeps the user access the same regardless of file layout.
+     */
+    bool no_nodes_in_file;
     struct
     {
         // root node sits at index[0]
@@ -1258,6 +1265,28 @@ static const char* tcvox_load_memory_(tcvox_scene_t* scene, const void* ptr, siz
         }
 
         offset = c.offset_end;
+    }
+
+    // special case: some .vox files only have model (SIZE/XYZI) information, without nodes; in that case, create some dummy nodes
+    scene->no_nodes_in_file = !scene->nodes.nindex;
+    if(scene->no_nodes_in_file && scene->nmodels)
+    {
+        assert(!scene->nodes.nshapes);
+        scene->nodes.nindex = 1;
+        scene->nodes.nshapes = 1;
+        TCVOX_ALLOC_CHECK_NOINIT_(scene->nodes.index, scene->nodes.nindex, "index for single model");
+        TCVOX_ALLOC_CHECK_NOINIT_(scene->nodes.shapes, scene->nodes.nshapes, "shape for single model");
+
+        scene->nodes.index[0] = (tcvox_node_ref_t){ 0, TCVOX_NODE_REF_TYPE_SHAPE };
+        scene->nodes.shapes[0] = (tcvox_shape_node_t){
+            .nmodels = scene->nmodels,
+        };
+        TCVOX_ALLOC_CHECK_NOINIT_(scene->nodes.shapes[0].models, scene->nodes.shapes[0].nmodels, "shape models");
+
+        for(size_t m = 0; m < scene->nmodels; m++)
+            scene->nodes.shapes[0].models[m] = (tcvox_shape_node_model_t){
+                .model = &scene->models[m],
+            };
     }
 
     assert(!error);
