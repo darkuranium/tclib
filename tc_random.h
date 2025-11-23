@@ -8,6 +8,8 @@
  * URL: https://github.com/darkuranium/tclib
  *
  * VERSION HISTORY:
+ * 0.0.4    added `tcrand_init_os_crypto` which attempts to use an OS-specific crypto generator
+ *          (CryptGenRandom, BCryptGenRandom, arc4random, /dev/[u]random, etc)
  * 0.0.3    fixed a bug where mean & sd were swapped for normal2_{d,f}
  * 0.0.2    fixed a bug in generating u32 and u64 integers
  *          (`max` was not being included in the possible results)
@@ -15,7 +17,9 @@
  *
  * TODOs:
  * - PCG
- * - OS random (CryptGenRandom or BCryptGenRandom / arc4random / ...)
+ *
+ * Windows note: By default, BCryptGenRandom is used on Windows, which is *not* supported on versions older than Vista.
+ * If support is required, #define TCRAND_WINDOWS_XP_SUPPORT in the same file that defines TC_RANDOM_IMPLEMENTATION.
  */
 
 #ifndef TC_RANDOM_H_
@@ -77,6 +81,8 @@ extern const uint32_t tcrand_minstd0_default_seed[];
 extern const uint32_t tcrand_minstd_default_seed[];
 extern const uint32_t tcrand_mt19937_default_seed[];
 extern const uint32_t tcrand_mt19937_64_default_seed[];
+
+TC_RandGen* tcrand_init_os_crypto(TC_RandGen* rgen);
 
 TC_RandGen* tcrand_init_lcg32(TC_RandGen* rgen, uint32_t a, uint32_t c, uint32_t m);
 TC_RandGen* tcrand_init_lcg64(TC_RandGen* rgen, uint64_t a, uint64_t c, uint64_t m);
@@ -140,6 +146,69 @@ TC_CDouble tcrand_next_normal2_d(TC_RandGen* rgen, double mean, double sd);
 
 #include <assert.h>
 
+#if defined(__EMSCRIPTEN__)
+#   define TC__RANDOM_OS_CRYPTO_WEB_CRYPTO
+#   include <emscripten.h>
+EM_JS(void, tcrand_i_Crypto_getRandomValues, (void* dataHead, void* dataTail), {
+    Crypto.getRandomValues(Module.HEAPU8.subarray(dataHead, dataTail));
+});
+#error "TODO: __EMSCRIPTEN__"
+#elif defined(_WIN32)
+#   define TC__RANDOM_OS_CRYPTO_WINDOWS
+#   define WIN32_LEAN_AND_MEAN
+#   define NOMINMAX
+#   include <windows.h>
+#   ifdef TCRAND_WINDOWS_XP_SUPPORT
+#       define TC__RANDOM_OS_CRYPTO_WINDOWS_CRYPT
+#       include <wincrypt.h>
+typedef BOOL TCRand_CryptAcquireContextW_t(
+    HCRYPTPROV *phProv,
+    LPCWSTR    szContainer,
+    LPCWSTR    szProvider,
+    DWORD      dwProvType,
+    DWORD      dwFlags
+);
+typedef BOOL TCRand_CryptReleaseContext_t(
+    HCRYPTPROV hProv,
+    DWORD      dwFlags
+);
+typedef BOOL TCRand_CryptContextAddRef_t(
+    HCRYPTPROV hProv,
+    DWORD      *pdwReserved,
+    DWORD      dwFlags
+);
+typedef BOOL TCRand_CryptGenRandom_t(
+    HCRYPTPROV hProv,
+    DWORD      dwLen,
+    BYTE       *pbBuffer
+);
+#   else
+#       define TC__RANDOM_OS_CRYPTO_WINDOWS_BCRYPT
+#       include <bcrypt.h>
+typedef NTSTATUS TCRand_BCryptGenRandom_t(
+    BCRYPT_ALG_HANDLE hAlgorithm,
+    PUCHAR            pbBuffer,
+    ULONG             cbBuffer,
+    ULONG             dwFlags
+);
+#   endif
+#elif defined(__linux__)
+#   define TC__RANDOM_OS_CRYPTO_DEV_URANDOM
+#   include <fcntl.h>
+#   include <unistd.h>
+#elif defined (__unix__) || (defined (__APPLE__) && defined (__MACH__))
+#   include <sys/param.h>  // TODO: can we rely on this existing?
+#   if defined(BSD) || defined(__APPLE__)
+#       define TC__RANDOM_OS_CRYPTO_ARC4RANDOM
+#   else
+#       define TC__RANDOM_OS_CRYPTO_DEV_URANDOM
+#       include <fcntl.h>
+#       include <unistd.h>
+#   endif
+#else
+#   define TC__RANDOM_OS_CRYPTO_NULL    // none available
+#endif
+
 #ifndef TC_MALLOC
 #define TC_MALLOC(size)         malloc(size)
 #endif /* TC_MALLOC */
@@ -162,6 +231,14 @@ TC_CDouble tcrand_next_normal2_d(TC_RandGen* rgen, double mean, double sd);
 #define TC__STATIC_CAST(T,v) ((T)(v))
 #endif
 #endif /* TC__STATIC_CAST */
+
+#ifndef TC__REINTERPRET_CAST
+#ifdef __cplusplus
+#define TC__REINTERPRET_CAST(T,v) reinterpret_cast<T>(v)
+#else
+#define TC__REINTERPRET_CAST(T,v) ((T)(v))
+#endif
+#endif /* TC__REINTERPRET_CAST */
 
 /* no cast done to preserve undefined function warnings in C */
 #ifndef TC__VOID_CAST
@@ -213,6 +290,160 @@ static uint64_t tcrand_i_rotl64(uint64_t x, uint64_t k)
 {
     return (x << k) | (x >> (64 - k));
 }
+
+#ifndef TC__RANDOM_OS_CRYPTO_NULL
+#define TCRAND_I_OS_CRYPTO_BUFSIZE   32
+struct TC_I_RandGen_OS_CryptoData
+{
+    unsigned char value_buf[TCRAND_I_OS_CRYPTO_BUFSIZE];
+#if defined(TC__RANDOM_OS_CRYPTO_WEB_CRYPTO)
+    /* nothing */
+#elif defined(TC__RANDOM_OS_CRYPTO_WINDOWS_CRYPT)
+    HMODULE lib_advapi32;
+    TCRand_CryptAcquireContextW_t* CryptAcquireContextW;
+    TCRand_CryptReleaseContext_t* CryptReleaseContext;
+    TCRand_CryptContextAddRef_t* CryptContextAddRef;
+    TCRand_CryptGenRandom_t* CryptGenRandom;
+    HCRYPTPROV crypt_prov;
+#elif defined(TC__RANDOM_OS_CRYPTO_WINDOWS_BCRYPT)
+    HMODULE lib_bcrypt;
+    TCRand_BCryptGenRandom_t* BCryptGenRandom;
+#elif defined(TC__RANDOM_OS_CRYPTO_ARC4RANDOM)
+    /* nothing */
+#elif defined(TC__RANDOM_OS_CRYPTO_DEV_URANDOM)
+    int fd_dev_urandom;
+#else
+#   error "Unhandled OS crypto engine"
+#endif
+};
+static struct TC_I_RandGen_OS_CryptoData* tcrand_i_os_crypto_init(struct TC_I_RandGen_OS_CryptoData* osdata)
+{
+#if defined(TC__RANDOM_OS_CRYPTO_WEB_CRYPTO)
+    /* no-op */
+#elif defined(TC__RANDOM_OS_CRYPTO_WINDOWS_CRYPT)
+    if(!(osdata->lib_advapi32 = LoadLibraryW(L"Advapi32.dll")))
+        return NULL;
+    if(!(osdata->CryptAcquireContextW = TC__REINTERPRET_CAST(TCRand_CryptAcquireContextW_t*,GetProcAddress(osdata->lib_advapi32, "CryptAcquireContextW")))
+    || !(osdata->CryptReleaseContext = TC__REINTERPRET_CAST(TCRand_CryptReleaseContext_t*,GetProcAddress(osdata->lib_advapi32, "CryptReleaseContext")))
+    || !(osdata->CryptContextAddRef = TC__REINTERPRET_CAST(TCRand_CryptContextAddRef_t*,GetProcAddress(osdata->lib_advapi32, "CryptContextAddRef")))
+    || !(osdata->CryptGenRandom = TC__REINTERPRET_CAST(TCRand_CryptGenRandom_t*,GetProcAddress(osdata->lib_advapi32, "CryptGenRandom"))))
+    {
+        FreeLibrary(osdata->lib_advapi32);
+        return NULL;
+    }
+    if(!osdata->CryptAcquireContextW(&osdata->crypt_prov, NULL, NULL, PROV_RSA_FULL, CRYPT_VERIFYCONTEXT))
+    {
+        FreeLibrary(osdata->lib_advapi32);
+        return NULL;
+    }
+#elif defined(TC__RANDOM_OS_CRYPTO_WINDOWS_BCRYPT)
+    if(!(osdata->lib_bcrypt = LoadLibraryW(L"Bcrypt.dll")))
+        return NULL;
+    if(!(osdata->BCryptGenRandom = TC__REINTERPRET_CAST(TCRand_BCryptGenRandom_t*,GetProcAddress(osdata->lib_bcrypt, "BCryptGenRandom"))))
+    {
+        FreeLibrary(osdata->lib_bcrypt);
+        return NULL;
+    }
+#elif defined(TC__RANDOM_OS_CRYPTO_ARC4RANDOM)
+    /* no-op */
+#elif defined(TC__RANDOM_OS_CRYPTO_DEV_URANDOM)
+    if((osdata->fd_dev_urandom = open("/dev/urandom", O_RDONLY)) < 0)
+        return NULL;
+#else
+#   error "Unhandled OS crypto engine"
+#endif
+
+    return osdata;
+}
+static void tcrand_i_os_crypto_next(void* data, void* value)
+{
+    struct TC_I_RandGen_OS_CryptoData* osdata = TC__VOID_CAST(struct TC_I_RandGen_OS_CryptoData*,data);
+
+#if defined(TC__RANDOM_OS_CRYPTO_WEB_CRYPTO)
+    (void)osdata;
+    tcrand_i_Crypto_getRandomValues(value, TC__STATIC_CAST(char*,value) + TCRAND_I_OS_CRYPTO_BUFSIZE);
+#elif defined(TC__RANDOM_OS_CRYPTO_WINDOWS_CRYPT)
+    BOOL ok = osdata->CryptGenRandom(osdata->crypt_prov, TCRAND_I_OS_CRYPTO_BUFSIZE, value);
+    (void)ok; assert(ok);
+#elif defined(TC__RANDOM_OS_CRYPTO_WINDOWS_BCRYPT)
+    NTSTATUS status = osdata->BCryptGenRandom(NULL, value, TCRAND_I_OS_CRYPTO_BUFSIZE, BCRYPT_USE_SYSTEM_PREFERRED_RNG);
+    (void)status; assert(!status);
+#elif defined(TC__RANDOM_OS_CRYPTO_ARC4RANDOM)
+    arc4random_buf(value, TCRAND_I_OS_CRYPTO_BUFSIZE);
+#elif defined(TC__RANDOM_OS_CRYPTO_DEV_URANDOM)
+    ssize_t len = read(osdata->fd_dev_urandom, value, TCRAND_I_OS_CRYPTO_BUFSIZE);
+    (void)len; assert(len == TCRAND_I_OS_CRYPTO_BUFSIZE);
+#else
+#   error "Unhandled OS crypto engine"
+#endif
+}
+static TC_RandGen* tcrand_i_os_crypto_clone(void* data, TC_RandGen* ngen)
+{
+    struct TC_I_RandGen_OS_CryptoData* osdata = TC__VOID_CAST(struct TC_I_RandGen_OS_CryptoData*,data);
+    struct TC_I_RandGen_OS_CryptoData* nosdata = TC_MALLOC_T_(struct TC_I_RandGen_OS_CryptoData);
+    if(!nosdata)
+        return NULL;
+
+    *nosdata = *osdata;
+
+#if defined(TC__RANDOM_OS_CRYPTO_WEB_CRYPTO)
+#elif defined(TC__RANDOM_OS_CRYPTO_WINDOWS_CRYPT)
+    if(!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, TC__REINTERPRET_CAST(LPCWSTR,osdata->lib_advapi32), &nosdata->lib_advapi32))
+    {
+        TC_FREE(nosdata);
+        return NULL;
+    }
+    if(!osdata->CryptContextAddRef(osdata->crypt_prov, NULL, 0))
+    {
+        FreeLibrary(nosdata->lib_advapi32);
+        TC_FREE(nosdata);
+        return NULL;
+    }
+#elif defined(TC__RANDOM_OS_CRYPTO_WINDOWS_BCRYPT)
+    if(!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, TC__REINTERPRET_CAST(LPCWSTR,osdata->lib_bcrypt), &nosdata->lib_bcrypt))
+    {
+        TC_FREE(nosdata);
+        return NULL;
+    }
+#elif defined(TC__RANDOM_OS_CRYPTO_ARC4RANDOM)
+    /* no-op */
+#elif defined(TC__RANDOM_OS_CRYPTO_DEV_URANDOM)
+    if((nosdata->fd_dev_urandom = dup(osdata->fd_dev_urandom)) < 0)
+    {
+        TC_FREE(nosdata);
+        return NULL;
+    }
+#else
+#   error "Unhandled OS crypto engine"
+#endif
+
+    ngen->data = nosdata;
+    ngen->value_ptr = nosdata->value_buf;
+    return ngen;
+}
+static void tcrand_i_os_crypto_dealloc(void* data)
+{
+    struct TC_I_RandGen_OS_CryptoData* osdata = TC__VOID_CAST(struct TC_I_RandGen_OS_CryptoData*,data);
+
+#if defined(TC__RANDOM_OS_CRYPTO_WEB_CRYPTO)
+    /* no-op */
+#elif defined(TC__RANDOM_OS_CRYPTO_WINDOWS_CRYPT)
+    osdata->CryptReleaseContext(osdata->crypt_prov, 0);
+    FreeLibrary(osdata->lib_advapi32);
+#elif defined(TC__RANDOM_OS_CRYPTO_WINDOWS_BCRYPT)
+    FreeLibrary(osdata->lib_bcrypt);
+#elif defined(TC__RANDOM_OS_CRYPTO_ARC4RANDOM)
+    /* no-op */
+#elif defined(TC__RANDOM_OS_CRYPTO_DEV_URANDOM)
+    close(osdata->fd_dev_urandom);
+#else
+#   error "Unhandled OS crypto engine"
+#endif
+
+    TC_FREE(osdata);
+}
+#endif
+
 
 struct TC_I_RandGen_LCGData
 {
@@ -517,6 +748,39 @@ static TC_RandGen* tcrand_i_splitmix64_clone(void* data, TC_RandGen* ngen)
     ngen->seed_ptr = &nsmdata->state;
     ngen->value_ptr = nsmdata->value_buf;
     return ngen;
+}
+
+TC_RandGen* tcrand_init_os_crypto(TC_RandGen* rgen)
+{
+#ifndef TC__RANDOM_OS_CRYPTO_NULL
+    if(!rgen) return NULL;
+
+    struct TC_I_RandGen_OS_CryptoData* osdata = TC_MALLOC_T_(struct TC_I_RandGen_OS_CryptoData);
+    if(!osdata) return NULL;
+
+    if(!tcrand_i_os_crypto_init(osdata))
+    {
+        TC_FREE(osdata);
+        return NULL;
+    }
+
+    *rgen = (TC_RandGen){
+        .seed = NULL,
+        .next = tcrand_i_os_crypto_next,
+        .clone = tcrand_i_os_crypto_clone,
+        .dealloc = tcrand_i_os_crypto_dealloc,
+        .data = osdata,
+        .seed_len = 0,
+        .seed_ptr = NULL,
+        .value_blen = sizeof(osdata->value_buf),
+        .value_alen = 0,
+        .value_ptr = osdata->value_buf,
+    };
+
+    return rgen;
+#else
+    return NULL;    // no crypto engine => always fail
+#endif
 }
 
 TC_RandGen* tcrand_init_lcg32(TC_RandGen* rgen, uint32_t a, uint32_t c, uint32_t m)
