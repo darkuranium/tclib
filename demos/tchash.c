@@ -27,7 +27,7 @@
         }                                                                      \
         while(rlen == sizeof(rbuf));                                           \
         tchash_##LHASH##_get(&LHASH, digest);                                  \
-        tchash_xstring_from_bytes(tdigest, digest, sizeof(digest), 0);         \
+        tchash_hex_from_bytes(tdigest, digest, sizeof(digest), 0);             \
         printf("%s\t*%s\n", tdigest, fname_);                                  \
     } while(0)
 #define HASH_FILE(LHASH,UHASH,FNAME)    HASH_FILE_S(LHASH,UHASH,UHASH,FNAME)
@@ -50,7 +50,7 @@
         }                                                                      \
         while(rlen == sizeof(rbuf));                                           \
         tchash_##LHASH##_get(&LHASH, digest, (DLEN));                          \
-        tchash_xstring_from_bytes(tdigest, digest, (DLEN), 0);                 \
+        tchash_hex_from_bytes(tdigest, digest, (DLEN), 0);                     \
         printf("%s\t*%s\n", tdigest, fname_);                                  \
     } while(0)
 #define HASH_FILE_DLEN(LHASH,UHASH,FNAME,DLEN)  HASH_FILE_S_DLEN(LHASH,UHASH,UHASH,FNAME,DLEN)

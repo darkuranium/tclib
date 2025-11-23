@@ -15,7 +15,7 @@ The following libraries are currently available.
 | tc_history.h       | -.-.-   | Line history handling; independent of system terminal.                        | tc_string                          |
 | tc_editline.h      | -.-.-   | Terminal line input with history handling.                                    | tc_terminal tc_history / tc_string |
 | tc_random.h        | -.-.-   | Random number generation. *(very unstable API)*                               |                                    |
-| tc_hash.h          | -.-.-   | Cryptographic hash function library.                                          |                                    |
+| tc_hash.h          | 0.1.0   | Cryptographic hash function library.                                          |                                    |
 | tc_texture_load.h  | -.-.-   | Texture loading (currently only DDS).                                         |                                    |
 | tc_texture_codec.h | -.-.-   | Texture block (de)compression (currently only decompressors).                 |                                    |
 | tc_thread.h        | -.-.-   | Threading &amp; atomics (atomics, threads, mutexes, condition variables, ...) |                                    |

@@ -2,12 +2,15 @@
  * tc_hash.h: Cryptographic hash function library.
  *
  * DEPENDS:
- * VERSION: 0.0.4 (2017-08-22)
+ * VERSION: 0.1.0 (2025-11-23)
  * LICENSE: CC0 & Boost (dual-licensed)
- * AUTHOR: Tim Cas
+ * AUTHOR: Tim Čas
  * URL: https://github.com/darkuranium/tclib
  *
  * VERSION HISTORY:
+ * 0.1.0    renamed `tchash_xstring_from_bytes` & `tchash_bytes_from_xstring` to use `hex` instead of `xstring`
+ *          added a generic/dynamic `TCHash` struct & handling, for runtime hash selection
+ *          made the `*_get` functions const-correct (since they don't modify state)
  * 0.0.4    added RIPEMD-{128,160,256,320}
  * 0.0.3    changed `tchash_xstring_from_bytes()` to accept an `uppercase` parameter
  *          fixed a theoretical bug with uninitialized data in some cases (by sheer dumb luck, the bug did not affect any existing implementations)
@@ -17,7 +20,11 @@
  * 0.0.1    initial public release (MD5, FIPS 180-4: SHA1 & SHA2-{224,256,384,512,512/224,512/256})
  *
  * TODOs:
- * - BLAKE, BLAKE2 (as an alternative to SHA3 with [hopefully: testing required!] better performenace)
+ * - Name-based hash lookups:
+ *   - Optimize `tchash_find_info_by_name()` lookup (currently O(n)).
+ *   - Add the ability to register custom hashes that can then be found using `tchash_find_info_by_name()`.
+ *   - Figure out a way to make `tchash_alloca_name()` working without a dual `tchash_find_info_by_name()` lookup.
+ * - BLAKE, BLAKE2, BLAKE3 (as an alternative to SHA3 with [hopefully: testing required!] better performenace)
  * - optimizations
  * - HMAC [FIPS 198-1]
  * - CRC-* (not cryptographic, but useful; most likely as a separate `tc_checksum`, though)
@@ -35,14 +42,16 @@
 
 /* ========== API ==========
  *
- * All of the hash algorithms follow the examples provided here for MD5; in
+ * There are, broadly, two APIs: A "generic HASH API" and a per-algorithm set of functions.
+ *
+ * All of the per-algorithm functions follow the examples provided here for MD5; in
  * other words, consider `MD5` and `md5` as wildcards for any algorithm.
  *
  *
  * For simple use with all the data already in memory, simply call:
  *
  *      uint8_t digest[TCHASH_MD5_DIGEST_SIZE];
- *      tchash_md5(digest, data, length_in_bytes);
+ *      tchash_md5(digest, data, data_length_in_bytes);
  *
  * However, for large files that wouldn't fit in memory, the above example may
  * not be viable. In that case, use the streaming API:
@@ -50,19 +59,22 @@
  *      uint8_t digest[TCHASH_MD5_DIGEST_SIZE];
  *      TCHash_MD5 md5;
  *      tchash_md5_init(&md5);
+ *
+ *      size_t nbytes;
+ *      char buffer[4096];
  *      do
  *      {
- *          size_t nbytes;
- *          char buffer[4096];
  *          nybtes = fread(buffer, 1, sizeof(buffer), file);
  *          tchash_md5_process(&md5, buffer, nbytes);
  *      }
  *      while(nbytes == sizeof(buffer));
+ *
  *      tchash_md5_get(&md5, digest);
  *
  * There is no `tchash_md5_deinit()` function --- all the data lives on the
  * stack, and thus there is nothing to deinitialize. Copying the state can thus
  * be done simply by assigning structs: `TCHash_MD5 md5copy = md5;`.
+ *
  *
  * Some algorithms (such as SHAKE128 and SHAKE256) are an exception here, since
  * they have variable-length digests. They take an additional parameter, the
@@ -82,8 +94,41 @@
  *      ...
  *
  *
+ * Above examples, using the dynamic API:
+ *
+ *      const TCHashInfo* info = tchash_find_info_by_name("MD5");
+ *      uint8_t* digest = malloc(info->max_digest_size);
+ *      tchash_oneshot_info(info, digest, info->max_digest_size, data, data_length_in_bytes);
+ *
+ * For larger files:
+ *
+ *      const TCHashInfo* info = tchash_find_info_by_name("MD5");
+ *      TCHash* hash = tchash_alloca_info(info);    // or, using heap: `tchash_new_info(info)` or `tchash_new_name("MD5")`
+ *      uint8_t* digest = malloc(info->max_digest_size);
+ *
+ *      size_t nbytes;
+ *      char buffer[4096];
+ *      do
+ *      {
+ *          nybtes = fread(buffer, 1, sizeof(buffer), file);
+ *          tchash_process(hash, buffer, nbytes);
+ *      }
+ *      while(nbytes == sizeof(buffer));
+ *
+ *      tchash_get(hash, digest, info->max_digest_size);
+ *      tchash_deinit(hash);    // or, using heap: `tchash_free(hash)`
+ *
+ * Just like with the per-algorithm functions, `tchash_get` doesn't modify the state, so the following is valid:
+ *
+ *      tchash_process(hash, bufA, bytesA);
+ *      tchash_get(hash, digestA, digestA_size);
+ *      tchash_process(hash, bufB, bytesB);
+ *      tchash_get(hash, digestB, digestB_size);
+ *      ...
+ *
+ *
  * Finally, some utility functions are available, e.g. for conversion between
- * hex-strings and raw byte data, and for
+ * hex-strings and raw byte data, and for a time-sttack-safe string or binary hash comparison.
  *
  *
  * The following algorithms are available:
@@ -132,7 +177,177 @@
  * sufficient for ensuring security in most cases.
  *
  *
- * What follows is the API reference; again, using MD5 as an example.
+ * What follows is the API reference; again, using MD5 as an example for the per-algorithm API.
+ *
+ * SYNOPSIS:
+ *  TCHash* tchash_new_info(const TCHashInfo* info);
+ *  TCHash* tchash_new_name(const char* name);
+ * PARAMETERS:
+ *  - info: Hash information; this does *not* have to be one of the builtin hashes, and may be a user-provided hash, instead.
+ *  - name: Hash name, to lookup the info via `tchash_find_info_by_name()`.
+ * RETURN VALUE:
+ *  A *heap-allocated* TCHash structure, or NULL on error (out-of-memory).
+ * DESCRIPTION:
+ *  Initialize a new dynamic hash algorithm, allocated on the heap.
+ *
+ *  The value *must* be freed using `tchash_free()`.
+ * SEE ALSO:
+ *  - `tchash_free()`
+ *  - `tchash_alloca_info()`
+ *
+ *
+ * SYNOPSIS:
+ *  void tchash_free(TCHash* hash);
+ * PARAMETERS:
+ *  - hash: *Heap-allocated* hash to free.
+ * DESCRIPTION:
+ *  Free a heap-allocated hash algorithm.
+ *
+ *  Note that stack-allocated algorithms should *not* be freed using this function, but with `tchash_deinit()` instead.
+ * SEE ALSO:
+ *  - `tchash_new_info()`
+ *  - `tchash_new_name()`
+ *  - `tchash_deinit()`
+ *
+ *
+ * SYNOPSIS:
+ *  TCHash* tchash_alloca_info(const TCHashInfo* info);
+ * PARAMETERS:
+ *  - info: Hash information; this does *not* have to be one of the builtin hashes, and may be a user-provided hash, instead.
+ *          Note that the parameter will be evaluated more than once, so do *not* directly pass `tchash_find_info_by_name()` to this function.
+ * RETURN VALUE:
+ *  A *stack-allocated* TCHash structure.
+ * DESCRIPTION:
+ *  Initialize a new dynamic hash algorithm, allocated on the stack.
+ *
+ *  Note that this function is a macro due to the internal use of `alloca()`; as such, one cannot obtain a pointer to it.
+ *  The value *must* be freed using `tchash_deinit()`.
+ *
+ *  There is currently no `tchash_alloca_name` due to C macro limitations.
+ * SEE ALSO:
+ *  - `tchash_deinit()`
+ *  - `tchash_new_info()`
+ *  - `tchash_new_name()`
+ *
+ *
+ * SYNOPSIS:
+ *  void tchash_deinit(TCHash* hash);
+ * PARAMETERS:
+ *  - hash: *Stack-allocated* hash to free.
+ * DESCRIPTION:
+ *  Free internal structures of a stack-allocated hash algorithm.
+ *
+ *  There are currently *no* builtin algorithms that require this call, but future algorithms as well as user-provided ones might require it.
+ *
+ *  Note that heap-allocated algorithms should *not* be freed using this function (as it will cause a memory leak), but with `tchash_free()` instead.
+ * SEE ALSO:
+ *  - `tchash_alloca_info()`
+ *  - `tchash_free()`
+ *
+ *
+ * SYNOPTIS:
+ *  void tchash_reset(TCHash* hash);
+ * PARAMETERS:
+ *  - hash: The hash to reset the state of.
+ * DESCRIPTION:
+ *  Reset a hash to the initial state (empty input).
+ *
+ *  This is equivalent to (but more efficient than) using:
+ *
+ *      TCHashInfo* info = hash->info;
+ *      tchash_free(hash);
+ *      hash = tchash_new_info(info);
+ *
+ *  (or analogously for a stack-allocated hash)
+ *
+ *
+ * SYNOPSIS:
+ *  void tchash_process(TCHash* hash, const void* data, size_t datalen);
+ * PARAMETERS:
+ *  - hash: hash object / state
+ *  - data: raw data to process
+ *  - datalen: data length in bytes
+ * DESCRIPTION:
+ *  Process `datalen` bytes of data, updating the internal state. If the length is
+ *  0, the call is a no-op.
+ *
+ *  Thus, the following are equivalent (assuming `data` is of type `char*` and
+ *  of adequate length):
+ *
+ *      tchash_process(hash, data, 80); // variant A
+ *
+ *      tchash_process(hash, data     , 20); // variant B
+ *      tchash_process(hash, data + 20, 5);
+ *      tchash_process(hash, data + 25, 55);
+ * SEE ALSO:
+ *  - `tchash_md5_process()`
+ *
+ *
+ * SYNOPSIS:
+ *  void* tchash_get(const TCHash* hash, void* digest, size_t digestlen);
+ *  void* tchash_get_trunc(const TCHash* hash, void* digest, size_t digestlen);
+ * PARAMETERS:
+ *  - hash: algorithm state
+ *  - digest: buffer for the resulting digest, at least `digestlen` bytes
+ *  - digestlen: length of the `digest` buffer
+ * RETURN VALUE:
+ *  The resulting digest (this is the same pointer that was passed in as `digest`).
+ * DESCRIPTION:
+ *  Do the final transformation of input, and copy said result into `digest`.
+ *
+ *  - For dynamically-sized algorithms such as SHAKE128, the two functions are equivalent.
+ *  - For statically-sized algorithms such as MD5, the `_trunc` variant permits for `digestlen` to be smaller than
+ *    the algorithm's "full" digest size, and will implicitly truncate the output.
+ *  - In no case can `digestlen` be larger than the algorithm's native digest size, *unless* the algorithm does not have
+ *    such a size (as is the case for the SHAKE{128,256} algorithms).
+ *
+ *  Note that this does *not* modify the algorithm state --- in other words,
+ *  it is perfectly acceptable to call this function, and then continue
+ *  processing with more data:
+ *
+ *      tchash_process(hash, dataA, dataA_len);
+ *      tchash_get(hash, digestA, digestA_len);
+ *      tchash_process(hash, dataB, dataB_len);
+ *      tchash_get(hash, digestB, digestB_len);
+ *      ...
+ * SEE ALSO:
+ *  - `tchash_md5_get()`
+ *
+ *
+ * SYNOPSIS:
+ *  void* tchash_oneshot_info(const TCHashInfo* info, void* digest, size_t digestlen, const void* data, size_t datalen);
+ *  void* tchash_oneshot_name(const char* name, void* digest, size_t digestlen, const void* data, size_t datalen);
+ *  void* tchash_oneshot_trunc_info(const TCHashInfo* info, void* digest, size_t digestlen, const void* data, size_t datalen);
+ *  void* tchash_oneshot_trunc_name(const char* name, void* digest, size_t digestlen, const void* data, size_t datalen);
+ * PARAMETERS:
+ *  - info: Hash information; this does *not* have to be one of the builtin hashes, and may be a user-provided hash, instead.
+ *  - name: Hash name, to lookup the info via `tchash_find_info_by_name()`.
+ *  - digest: buffer for the resulting digest, at least `digestlen` bytes
+ *  - digestlen: length of the `digest` buffer
+ *  - data: raw data to process
+ *  - datalen: data length in bytes
+ * RETURN VALUE:
+ *  The resulting digest (this is the same pointer that was passed in as `digest`).
+ * DESCRIPTION:
+ *  Compute a hash of the data in memory.
+ *
+ *  This is a shorthand for `init();process(data,dlen);get(digest);deinit()`. A sample implementation of the first function could be the following:
+ *
+ *      void* my_tchash_oneshot_name(const TCHashInfo* info, void* digest, size_t digestlen, const void* data, size_t datalen)
+ *      {
+ *          assert(info);
+ *          TCHash* hash = tchash_alloca_info(info);
+ *          tchash_process(hash, data, datalen);
+ *          tchash_get(hash, digest, digestlen);
+ *          tchash_deinit(hash);
+ *          return digest;
+ *      }
+ *
+ *  For the difference between the `*_trunc_*` variants and non-, see documentation of `tchash_get_trunc()`.
+ * SEE ALSO:
+ *  - `tchash_get()`
+ *  - `tchash_get_trunc()`
+ *  - `tchash_md5()`
  *
  *
  * SYNOPSIS:
@@ -239,7 +454,7 @@
  *
  *
  * SYNOPSIS:
- *  size_t tchash_xstring_from_bytes(char* str, const void* data, size_t dlen, int uppercase);
+ *  size_t tchash_hex_from_bytes(char* str, const void* data, size_t dlen, int uppercase);
  * PARAMETERS:
  *  - str: buffer of length at least `dlen * 2 + 1` bytes
  *  - data: data to convert
@@ -253,11 +468,12 @@
  *  For example, this will convert the bytes `{0x0a,0x1b,0x2c}` into `"0a1b2c"`,
  *  including the terminating `'\0'` (so, 6+1 characters are written).
  * SEE ALSO:
- *  - `tchash_bytes_from_xstring()`
+ *  - `tchash_bytes_from_hex()`
+ *  - `tchash_base64_from_bytes()`
  *
  *
  * SYNOPSIS:
- *  size_t tchash_bytes_from_xstring(void* data, const char* str, int slen);
+ *  size_t tchash_bytes_from_hex(void* data, const char* str, int slen);
  * PARAMETERS:
  *  - data: buffer of length at least `str_length / 2 + 1` bytes
  *  - str: string to convert
@@ -274,7 +490,8 @@
  *  For example, this will convert the string `"0a1 b 2c"` into the raw bytes
  *  `{0x0a,0x1b,0x2c}`.
  * SEE ALSO:
- *  - `tchash_xstring_from_bytes()`
+ *  - `tchash_hex_from_bytes()`
+ *  - `tchash_bytes_from_base64()`
  *
  *
  * SYNOPSIS:
@@ -301,6 +518,7 @@
  *  the last two characters are customizable.
  * SEE ALSO:
  *  - `tchash_bytes_from_base64()`
+ *  - `tchash_bytes_from_hex()`
  *
  *
  * SYNOPSIS:
@@ -324,6 +542,25 @@
  *  For example, this will convert the string `"TWQ="` into bytes `{0x4d,0x61}`.
  * SEE ALSO:
  *  - `tchash_base64_from_bytes()`
+ *  - `tchash_hex_from_bytes()`
+ *
+ *
+ * SYNOPSIS:
+ *  const TCHashInfo* tchash_find_info_by_name(const char* name);
+ * PARAMETERS:
+ *  - name: name of hash algorithm to find the info of
+ * RETURN VALUE:
+ *  A pointer to the `TCHashInfo` structure of the matching algorithm if found, or `NULL` if not found.
+ * DESCRIPTION:
+ *  Find information about a hash algorithm by name.
+ *
+ *  The comparisons are case-insensitive, and aliases are available,
+ *  for example, the strings "SHA-224", "SHA2-256/224", and "SHA-2-256/224" all refer to the same algorithm.
+ * SEE ALSO:
+ *  - `tchash_new_info()`
+ *  - `tchash_alloca_info()`
+ *  - `tchash_oneshot_info()`
+ *  - `tchash_oneshot_trunc_info()`
  */
 
 #ifndef TC_HASH_H_
@@ -331,16 +568,117 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdbool.h>
+
+#ifndef TC__ALIGN_MAX
+#if __STDC_VERSION__ >= 201112L // C11
+#define TC__ALIGN_MAX _Alignas(max_align_t)
+#elif defined(__GNUC__)
+#define TC__ALIGN_MAX __attribute__((aligned))
+#elif defined(_MSC_VER)
+#define TC__ALIGN_MAX __declspec(align(16))
+#else   // unknown compiler ... we'll use default alignment and hope for the best
+#define TC__ALIGN_MAX
+#endif
+#endif /* TC__ALIGN_MAX */
+
+#ifndef TC__STATIC_CAST
+#ifdef __cplusplus
+#define TC__STATIC_CAST(T,v) static_cast<T>(v)
+#else
+#define TC__STATIC_CAST(T,v) ((T)(v))
+#endif
+#endif /* TC__STATIC_CAST */
+
+/* no cast done to preserve undefined function warnings in C, but we do one in C++ */
+#ifndef TC__VOID_CAST
+#ifdef __cplusplus
+#define TC__VOID_CAST(T,v)  TC__STATIC_CAST(T,v)
+#else
+#define TC__VOID_CAST(T,v)  (v)
+#endif
+#endif /* TC__VOID_CAST */
+
+#ifndef TC_ALLOCA
+#ifdef _WIN32
+#include <malloc.h>
+#define TC_ALLOCA(size)         _alloca(size)
+#elif defined(__unix__)
+#include <alloca.h>
+#define TC_ALLOCA(size)         alloca(size)
+#else
+// we don't know where to find it, so we'll just assume it's available (but <stdlib.h> is a good guess)...
+#include <stdlib.h>
+#define TC_ALLOCA(size)         alloca(size)
+#endif
+#endif /* TC_ALLOCA */
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
+#define TCHASH_MAX_ALIASES 8
+
 int tchash_secure_eq(const void* a, const void* b, size_t len);
-size_t tchash_xstring_from_bytes(char* str, const void* data, size_t dlen, int uppercase);
-size_t tchash_bytes_from_xstring(void* data, const char* str, int slen);
+size_t tchash_hex_from_bytes(char* str, const void* data, size_t datalen, bool uppercase);
+size_t tchash_bytes_from_hex(void* data, const char* str, ptrdiff_t slen);
 size_t tchash_base64_from_bytes(char* str, const void* data, size_t dlen, int c62, int c63, int cpad);
 size_t tchash_bytes_from_base64(void* data, const char* str, int slen, int c62, int c63, int cpad);
+
+
+typedef struct TCHashInfo TCHashInfo;
+typedef struct TCHash TCHash;
+
+struct TCHashInfo
+{
+    const char* name;
+    const char* aliases[TCHASH_MAX_ALIASES];
+
+    size_t state_size;
+    size_t block_size;
+    size_t max_digest_size;
+    bool dynamic_digest_size;
+
+    void (*cb_init)(TCHash* hash);
+    void (*cb_deinit)(TCHash* hash);    // OPTIONAL: If omitted, treated as no-op
+    void (*cb_reset)(TCHash* hash);     // OPTIONAL: If omitted, `cb_deinit` & `cb_init` are called
+    void (*cb_process)(TCHash* hash, const void* data, size_t datalen);
+    void (*cb_get)(const TCHash* hash, void* digest, size_t digestlen);
+
+    // A simple callback that avoids the usual allocations.
+    // OPTIONAL: If omitted, a combination of malloc & init/process/digest/deinit is used.
+    void (*cb_oneshot)(const TCHashInfo* hinfo, void* digest, size_t digestlen, const void* data, size_t datalen);
+};
+struct TCHash
+{
+    const TCHashInfo* info;
+
+    TC__ALIGN_MAX
+    char state[];
+};
+
+extern const TCHashInfo* const tchash_all_infos[];
+const TCHashInfo* tchash_find_info_by_name(const char* name);
+
+// heap-based
+TCHash* tchash_new_info(const TCHashInfo* info);
+TCHash* tchash_new_name(const char* name);
+void tchash_free(TCHash* hash);
+
+// stack-based; note that these *require* a valid info or name
+TCHash* tchash_i_alloca_init_(TCHash* hash, const TCHashInfo* info);
+#define tchash_alloca_info(info)    tchash_i_alloca_init_(TC__VOID_CAST(TCHash*,TC_ALLOCA(sizeof(TCHash) + (info)->state_size)), (info))
+//#define tchash_alloca_name(name)  // (we need expr blocks or similar, so for now, we'll just omit this)
+void tchash_deinit(TCHash* hash);
+
+void tchash_reset(TCHash* hash);
+void tchash_process(TCHash* hash, const void* data, size_t datalen);
+void* tchash_get(const TCHash* hash, void* digest, size_t digestlen);
+void* tchash_get_trunc(const TCHash* hash, void* digest, size_t digestlen);
+void* tchash_oneshot_info(const TCHashInfo* info, void* digest, size_t digestlen, const void* data, size_t datalen);
+void* tchash_oneshot_name(const char* name, void* digest, size_t digestlen, const void* data, size_t datalen);
+void* tchash_oneshot_trunc_info(const TCHashInfo* info, void* digest, size_t digestlen, const void* data, size_t datalen);
+void* tchash_oneshot_trunc_name(const char* name, void* digest, size_t digestlen, const void* data, size_t datalen);
 
 
 #define TCHASH_MD5_BLOCK_SIZE       64
@@ -354,8 +692,9 @@ typedef struct TCHash_MD5
 } TCHash_MD5;
 TCHash_MD5* tchash_md5_init(TCHash_MD5* md5);
 void tchash_md5_process(TCHash_MD5* md5, const void* data, size_t dlen);
-void* tchash_md5_get(TCHash_MD5* md5, void* digest);
+void* tchash_md5_get(const TCHash_MD5* md5, void* digest);
 void* tchash_md5(void* digest, const void* data, size_t dlen);
+extern const TCHashInfo tchash_md5_info;
 
 
 #define TCHASH_TIGER_BLOCK_SIZE     (512/8)
@@ -380,15 +719,18 @@ void tchash_tiger_process(TCHash_Tiger* tiger, const void* data, size_t dlen);
 #define tchash_tiger192_process     tchash_tiger_process
 #define tchash_tiger160_process     tchash_tiger_process
 #define tchash_tiger128_process     tchash_tiger_process
-void* tchash_tiger_get(TCHash_Tiger* tiger, void* digest, size_t digestlen);
-void* tchash_tiger192_get(TCHash_Tiger* tiger, void* digest);
-void* tchash_tiger160_get(TCHash_Tiger* tiger, void* digest);
-void* tchash_tiger128_get(TCHash_Tiger* tiger, void* digest);
+void* tchash_tiger_get(const TCHash_Tiger* tiger, void* digest, size_t digestlen);
+void* tchash_tiger192_get(const TCHash_Tiger* tiger, void* digest);
+void* tchash_tiger160_get(const TCHash_Tiger* tiger, void* digest);
+void* tchash_tiger128_get(const TCHash_Tiger* tiger, void* digest);
 void* tchash_tiger(void* digest, size_t digestlen, const void* data, size_t dlen);
 void* tchash_tiger192(void* digest, const void* data, size_t dlen);
 void* tchash_tiger160(void* digest, const void* data, size_t dlen);
 void* tchash_tiger128(void* digest, const void* data, size_t dlen);
+extern const TCHashInfo tchash_tiger_info;
 
+
+#define TCHASH_TIGER2_BLOCK_SIZE      TCHASH_TIGER_BLOCK_SIZE
 #define TCHASH_TIGER2_192_DIGEST_SIZE TCHASH_TIGER192_DIGEST_SIZE
 #define TCHASH_TIGER2_160_DIGEST_SIZE TCHASH_TIGER160_DIGEST_SIZE
 #define TCHASH_TIGER2_128_DIGEST_SIZE TCHASH_TIGER128_DIGEST_SIZE
@@ -404,14 +746,15 @@ typedef TCHash_Tiger2 TCHash_Tiger2_128;
 #define tchash_tiger2_192_process   tchash_tiger2_process
 #define tchash_tiger2_160_process   tchash_tiger2_process
 #define tchash_tiger2_128_process   tchash_tiger2_process
-void* tchash_tiger2_get(TCHash_Tiger* tiger, void* digest, size_t digestlen);
-void* tchash_tiger2_192_get(TCHash_Tiger* tiger, void* digest);
-void* tchash_tiger2_160_get(TCHash_Tiger* tiger, void* digest);
-void* tchash_tiger2_128_get(TCHash_Tiger* tiger, void* digest);
+void* tchash_tiger2_get(const TCHash_Tiger2* tiger, void* digest, size_t digestlen);
+void* tchash_tiger2_192_get(const TCHash_Tiger2* tiger, void* digest);
+void* tchash_tiger2_160_get(const TCHash_Tiger2* tiger, void* digest);
+void* tchash_tiger2_128_get(const TCHash_Tiger2* tiger, void* digest);
 void* tchash_tiger2(void* digest, size_t digestlen, const void* data, size_t dlen);
 void* tchash_tiger2_192(void* digest, const void* data, size_t dlen);
 void* tchash_tiger2_160(void* digest, const void* data, size_t dlen);
 void* tchash_tiger2_128(void* digest, const void* data, size_t dlen);
+extern const TCHashInfo tchash_tiger2_info;
 
 
 #define TCHASH_RIPEMD128_BLOCK_SIZE     (16*4)
@@ -425,8 +768,10 @@ typedef struct TCHash_RIPEMD128
 } TCHash_RIPEMD128;
 TCHash_RIPEMD128* tchash_ripemd128_init(TCHash_RIPEMD128* ripemd128);
 void tchash_ripemd128_process(TCHash_RIPEMD128* ripemd128, const void* data, size_t dlen);
-void* tchash_ripemd128_get(TCHash_RIPEMD128* ripemd128, void* digest);
+void* tchash_ripemd128_get(const TCHash_RIPEMD128* ripemd128, void* digest);
 void* tchash_ripemd128(void* digest, const void* data, size_t dlen);
+extern const TCHashInfo tchash_ripemd128_info;
+
 
 #define TCHASH_RIPEMD160_BLOCK_SIZE     (16*4)
 #define TCHASH_RIPEMD160_DIGEST_SIZE    (160/8)
@@ -439,8 +784,10 @@ typedef struct TCHash_RIPEMD160
 } TCHash_RIPEMD160;
 TCHash_RIPEMD160* tchash_ripemd160_init(TCHash_RIPEMD160* ripemd160);
 void tchash_ripemd160_process(TCHash_RIPEMD160* ripemd160, const void* data, size_t dlen);
-void* tchash_ripemd160_get(TCHash_RIPEMD160* ripemd160, void* digest);
+void* tchash_ripemd160_get(const TCHash_RIPEMD160* ripemd160, void* digest);
 void* tchash_ripemd160(void* digest, const void* data, size_t dlen);
+extern const TCHashInfo tchash_ripemd160_info;
+
 
 #define TCHASH_RIPEMD256_BLOCK_SIZE     (16*4)
 #define TCHASH_RIPEMD256_DIGEST_SIZE    (256/8)
@@ -453,8 +800,10 @@ typedef struct TCHash_RIPEMD256
 } TCHash_RIPEMD256;
 TCHash_RIPEMD256* tchash_ripemd256_init(TCHash_RIPEMD256* ripemd256);
 void tchash_ripemd256_process(TCHash_RIPEMD256* ripemd256, const void* data, size_t dlen);
-void* tchash_ripemd256_get(TCHash_RIPEMD256* ripemd256, void* digest);
+void* tchash_ripemd256_get(const TCHash_RIPEMD256* ripemd256, void* digest);
 void* tchash_ripemd256(void* digest, const void* data, size_t dlen);
+extern const TCHashInfo tchash_ripemd256_info;
+
 
 #define TCHASH_RIPEMD320_BLOCK_SIZE     (16*4)
 #define TCHASH_RIPEMD320_DIGEST_SIZE    (320/8)
@@ -467,8 +816,10 @@ typedef struct TCHash_RIPEMD320
 } TCHash_RIPEMD320;
 TCHash_RIPEMD320* tchash_ripemd320_init(TCHash_RIPEMD320* ripemd320);
 void tchash_ripemd320_process(TCHash_RIPEMD320* ripemd320, const void* data, size_t dlen);
-void* tchash_ripemd320_get(TCHash_RIPEMD320* ripemd320, void* digest);
+void* tchash_ripemd320_get(const TCHash_RIPEMD320* ripemd320, void* digest);
 void* tchash_ripemd320(void* digest, const void* data, size_t dlen);
+extern const TCHashInfo tchash_ripemd320_info;
+
 
 #define TCHASH_SHA1_BLOCK_SIZE      64
 #define TCHASH_SHA1_DIGEST_SIZE     20
@@ -481,8 +832,9 @@ typedef struct TCHash_SHA1
 } TCHash_SHA1;
 TCHash_SHA1* tchash_sha1_init(TCHash_SHA1* sha1);
 void tchash_sha1_process(TCHash_SHA1* sha1, const void* data, size_t dlen);
-void* tchash_sha1_get(TCHash_SHA1* sha1, void* digest);
+void* tchash_sha1_get(const TCHash_SHA1* sha1, void* digest);
 void* tchash_sha1(void* digest, const void* data, size_t dlen);
+extern const TCHashInfo tchash_sha1_info;
 
 
 #define TCHASH_SHA2_256_BLOCK_SIZE  64
@@ -496,8 +848,10 @@ typedef struct TCHash_SHA2_256
 } TCHash_SHA2_256;
 TCHash_SHA2_256* tchash_sha2_256_init(TCHash_SHA2_256* sha2_256);
 void tchash_sha2_256_process(TCHash_SHA2_256* sha2_256, const void* data, size_t dlen);
-void* tchash_sha2_256_get(TCHash_SHA2_256* sha2_256, void* digest);
+void* tchash_sha2_256_get(const TCHash_SHA2_256* sha2_256, void* digest);
 void* tchash_sha2_256(void* digest, const void* data, size_t dlen);
+extern const TCHashInfo tchash_sha2_256_info;
+
 
 #define TCHASH_SHA2_512_BLOCK_SIZE  128
 #define TCHASH_SHA2_512_DIGEST_SIZE 64
@@ -515,49 +869,51 @@ typedef struct TCHash_SHA2_512
 } TCHash_SHA2_512;
 TCHash_SHA2_512* tchash_sha2_512_init(TCHash_SHA2_512* sha2_512);
 void tchash_sha2_512_process(TCHash_SHA2_512* sha2_512, const void* data, size_t dlen);
-void* tchash_sha2_512_get(TCHash_SHA2_512* sha2_512, void* digest);
+void* tchash_sha2_512_get(const TCHash_SHA2_512* sha2_512, void* digest);
 void* tchash_sha2_512(void* digest, const void* data, size_t dlen);
+extern const TCHashInfo tchash_sha2_512_info;
 
 TCHash_SHA2_512* tchash_sha2_512_init_ivgen(TCHash_SHA2_512* sha2);
+extern const TCHashInfo tchash_sha2_512_ivgen_info;
 
 #define TCHASH_SHA2_224_BLOCK_SIZE  TCHASH_SHA2_256_BLOCK_SIZE
 #define TCHASH_SHA2_224_DIGEST_SIZE 28
-typedef struct TCHash_SHA2_224
-{
-    TCHash_SHA2_256 sha2_256;
-} TCHash_SHA2_224;
+typedef TCHash_SHA2_256 TCHash_SHA2_224;
 TCHash_SHA2_224* tchash_sha2_224_init(TCHash_SHA2_224* sha2_224);
 void tchash_sha2_224_process(TCHash_SHA2_224* sha2_224, const void* data, size_t dlen);
-void* tchash_sha2_224_get(TCHash_SHA2_224* sha2_224, void* digest);
+void* tchash_sha2_224_get(const TCHash_SHA2_224* sha2_224, void* digest);
 void* tchash_sha2_224(void* digest, const void* data, size_t dlen);
+extern const TCHashInfo tchash_sha2_224_info;
+
 
 #define TCHASH_SHA2_384_BLOCK_SIZE  TCHASH_SHA2_512_BLOCK_SIZE
 #define TCHASH_SHA2_384_DIGEST_SIZE 48
-typedef struct TCHash_SHA2_384
-{
-    TCHash_SHA2_512 sha2_512;
-} TCHash_SHA2_384;
+typedef TCHash_SHA2_512 TCHash_SHA2_384;
 TCHash_SHA2_384* tchash_sha2_384_init(TCHash_SHA2_384* sha2_384);
 void tchash_sha2_384_process(TCHash_SHA2_384* sha2_384, const void* data, size_t dlen);
-void* tchash_sha2_384_get(TCHash_SHA2_384* sha2_384, void* digest);
+void* tchash_sha2_384_get(const TCHash_SHA2_384* sha2_384, void* digest);
 void* tchash_sha2_384(void* digest, const void* data, size_t dlen);
+extern const TCHashInfo tchash_sha2_384_info;
+
 
 #define TCHASH_SHA2_512_224_BLOCK_SIZE  TCHASH_SHA2_512_BLOCK_SIZE
 #define TCHASH_SHA2_512_224_DIGEST_SIZE 28
 typedef TCHash_SHA2_512 TCHash_SHA2_512_224;
 TCHash_SHA2_512_224* tchash_sha2_512_224_init(TCHash_SHA2_512_224* sha2_512_224);
 void tchash_sha2_512_224_process(TCHash_SHA2_512_224* sha2_512_224, const void* data, size_t dlen);
-void* tchash_sha2_512_224_get(TCHash_SHA2_512_224* sha2_512_224, void* digest);
+void* tchash_sha2_512_224_get(const TCHash_SHA2_512_224* sha2_512_224, void* digest);
 void* tchash_sha2_512_224(void* digest, const void* data, size_t dlen);
+extern const TCHashInfo tchash_sha2_512_224_info;
+
 
 #define TCHASH_SHA2_512_256_BLOCK_SIZE  TCHASH_SHA2_512_BLOCK_SIZE
 #define TCHASH_SHA2_512_256_DIGEST_SIZE 32
 typedef TCHash_SHA2_512 TCHash_SHA2_512_256;
-
 TCHash_SHA2_512_256* tchash_sha2_512_256_init(TCHash_SHA2_512_256* sha2_512_256);
 void tchash_sha2_512_256_process(TCHash_SHA2_512_256* sha2_512_256, const void* data, size_t dlen);
-void* tchash_sha2_512_256_get(TCHash_SHA2_512_256* sha2_512_256, void* digest);
+void* tchash_sha2_512_256_get(const TCHash_SHA2_512_256* sha2_512_256, void* digest);
 void* tchash_sha2_512_256(void* digest, const void* data, size_t dlen);
+extern const TCHashInfo tchash_sha2_512_256_info;
 
 
 #define TCHASH_SHA3_224_BLOCK_SIZE  ((1600-2*224)/8)
@@ -571,8 +927,10 @@ typedef struct TCHash_SHA3_224
 } TCHash_SHA3_224;
 TCHash_SHA3_224* tchash_sha3_224_init(TCHash_SHA3_224* sha3_224);
 void tchash_sha3_224_process(TCHash_SHA3_224* sha3_224, const void* data, size_t dlen);
-void* tchash_sha3_224_get(TCHash_SHA3_224* sha3_224, void* digest);
+void* tchash_sha3_224_get(const TCHash_SHA3_224* sha3_224, void* digest);
 void* tchash_sha3_224(void* digest, const void* data, size_t dlen);
+extern const TCHashInfo tchash_sha3_224_info;
+
 
 #define TCHASH_SHA3_256_BLOCK_SIZE  ((1600-2*256)/8)
 #define TCHASH_SHA3_256_DIGEST_SIZE (256/8)
@@ -585,8 +943,10 @@ typedef struct TCHash_SHA3_256
 } TCHash_SHA3_256;
 TCHash_SHA3_256* tchash_sha3_256_init(TCHash_SHA3_256* sha3_256);
 void tchash_sha3_256_process(TCHash_SHA3_256* sha3_256, const void* data, size_t dlen);
-void* tchash_sha3_256_get(TCHash_SHA3_256* sha3_256, void* digest);
+void* tchash_sha3_256_get(const TCHash_SHA3_256* sha3_256, void* digest);
 void* tchash_sha3_256(void* digest, const void* data, size_t dlen);
+extern const TCHashInfo tchash_sha3_256_info;
+
 
 #define TCHASH_SHA3_384_BLOCK_SIZE  ((1600-2*384)/8)
 #define TCHASH_SHA3_384_DIGEST_SIZE (384/8)
@@ -599,8 +959,10 @@ typedef struct TCHash_SHA3_384
 } TCHash_SHA3_384;
 TCHash_SHA3_384* tchash_sha3_384_init(TCHash_SHA3_384* sha3_384);
 void tchash_sha3_384_process(TCHash_SHA3_384* sha3_384, const void* data, size_t dlen);
-void* tchash_sha3_384_get(TCHash_SHA3_384* sha3_384, void* digest);
+void* tchash_sha3_384_get(const TCHash_SHA3_384* sha3_384, void* digest);
 void* tchash_sha3_384(void* digest, const void* data, size_t dlen);
+extern const TCHashInfo tchash_sha3_384_info;
+
 
 #define TCHASH_SHA3_512_BLOCK_SIZE  ((1600-2*512)/8)
 #define TCHASH_SHA3_512_DIGEST_SIZE (512/8)
@@ -613,8 +975,9 @@ typedef struct TCHash_SHA3_512
 } TCHash_SHA3_512;
 TCHash_SHA3_512* tchash_sha3_512_init(TCHash_SHA3_512* sha3_512);
 void tchash_sha3_512_process(TCHash_SHA3_512* sha3_512, const void* data, size_t dlen);
-void* tchash_sha3_512_get(TCHash_SHA3_512* sha3_512, void* digest);
+void* tchash_sha3_512_get(const TCHash_SHA3_512* sha3_512, void* digest);
 void* tchash_sha3_512(void* digest, const void* data, size_t dlen);
+extern const TCHashInfo tchash_sha3_512_info;
 
 
 #define TCHASH_SHAKE128_BLOCK_SIZE  ((1600-2*128)/8)
@@ -627,8 +990,10 @@ typedef struct TCHash_SHAKE128
 } TCHash_SHAKE128;
 TCHash_SHAKE128* tchash_shake128_init(TCHash_SHAKE128* shake128);
 void tchash_shake128_process(TCHash_SHAKE128* shake128, const void* data, size_t dlen);
-void* tchash_shake128_get(TCHash_SHAKE128* shake128, void* digest, size_t digestlen);
+void* tchash_shake128_get(const TCHash_SHAKE128* shake128, void* digest, size_t digestlen);
 void* tchash_shake128(void* digest, size_t digestlen, const void* data, size_t dlen);
+extern const TCHashInfo tchash_shake128_info;
+
 
 #define TCHASH_SHAKE256_BLOCK_SIZE  ((1600-2*256)/8)
 typedef struct TCHash_SHAKE256
@@ -640,8 +1005,10 @@ typedef struct TCHash_SHAKE256
 } TCHash_SHAKE256;
 TCHash_SHAKE256* tchash_shake256_init(TCHash_SHAKE256* shake256);
 void tchash_shake256_process(TCHash_SHAKE256* shake256, const void* data, size_t dlen);
-void* tchash_shake256_get(TCHash_SHAKE256* shake256, void* digest, size_t digestlen);
+void* tchash_shake256_get(const TCHash_SHAKE256* shake256, void* digest, size_t digestlen);
 void* tchash_shake256(void* digest, size_t digestlen, const void* data, size_t dlen);
+extern const TCHashInfo tchash_shake256_info;
+
 
 #ifdef __cplusplus
 }
@@ -655,28 +1022,199 @@ void* tchash_shake256(void* digest, size_t digestlen, const void* data, size_t d
 #undef TC_HASH_IMPLEMENTATION
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 
 #ifndef TC__ASSERT
 #include <assert.h>
 #define TC__ASSERT(x)   assert(x)
 #endif /* TC__ASSERT */
 
-#ifndef TC__STATIC_CAST
+#ifndef TC__REINTERPRET_CAST
 #ifdef __cplusplus
-#define TC__STATIC_CAST(T,v) static_cast<T>(v)
+#define TC__REINTERPRET_CAST(T,v) reinterpret_cast<T>(v)
 #else
-#define TC__STATIC_CAST(T,v) ((T)(v))
+#define TC__REINTERPRET_CAST(T,v) ((T)(v))
 #endif
-#endif /* TC__STATIC_CAST */
+#endif /* TC__REINTERPRET_CAST */
 
-/* no cast done to preserve undefined function warnings in C */
-#ifndef TC__VOID_CAST
-#ifdef __cplusplus
-#define TC__VOID_CAST(T,v)  TC__STATIC_CAST(T,v)
-#else
-#define TC__VOID_CAST(T,v)  (v)
-#endif
-#endif /* TC__VOID_CAST */
+#ifndef TC_MALLOC
+#define TC_MALLOC(size)         malloc(size)
+#endif /* TC_MALLOC */
+#ifndef TC_FREE
+#define TC_FREE(ptr)            free(ptr)
+#endif /* TC_FREE */
+
+const TCHashInfo* const tchash_all_infos[] = {
+    // MD5
+    &tchash_md5_info,
+    // Tiger
+    &tchash_tiger_info, &tchash_tiger2_info,
+    // RIPEMD
+    &tchash_ripemd128_info, &tchash_ripemd160_info, &tchash_ripemd256_info, &tchash_ripemd320_info,
+    // SHA1
+    &tchash_sha1_info,
+    // SHA2
+    &tchash_sha2_256_info, &tchash_sha2_512_info,
+    &tchash_sha2_512_ivgen_info,
+    &tchash_sha2_224_info, &tchash_sha2_384_info,
+    &tchash_sha2_512_224_info, &tchash_sha2_512_256_info,
+    // SHA3
+    &tchash_sha3_224_info, &tchash_sha3_256_info, &tchash_sha3_384_info, &tchash_sha3_512_info,
+    // SHAKE
+    &tchash_shake128_info, &tchash_shake256_info,
+    NULL,
+};
+
+static bool tchash_i_istreq(const char* astr, const char* bstr)
+{
+    for(;;)
+    {
+        unsigned char a = *astr++, b = *bstr++;
+        if(!a && !b)
+            return true;    // strings end in same spot => match
+        if(!a || !b)
+            return false;   // strings end in different spots => mismatch
+        a = tolower(a); b = tolower(b);
+        if(a != b)
+            return false;
+    }
+}
+const TCHashInfo* tchash_find_info_by_name(const char* name)
+{
+    for(size_t i = 0; tchash_all_infos[i]; i++)
+    {
+        const TCHashInfo* info = tchash_all_infos[i];
+        if(tchash_i_istreq(name, info->name))
+            return info;
+
+        for(size_t a = 0; a < TCHASH_MAX_ALIASES && info->aliases[a]; a++)
+            if(tchash_i_istreq(name, info->aliases[a]))
+                return info;
+    }
+
+    return NULL;
+}
+
+TCHash* tchash_new_info(const TCHashInfo* info)
+{
+    if(!info) return NULL;
+
+    TCHash* hash = TC_MALLOC(sizeof(*hash) + info->state_size);
+    if(!hash)
+        return NULL;
+
+    hash->info = info;
+    info->cb_init(hash);
+
+    return hash;
+}
+TCHash* tchash_new_name(const char* name) { return tchash_new_info(tchash_find_info_by_name(name)); }
+void tchash_free(TCHash* hash)
+{
+    tchash_deinit(hash);
+    TC_FREE(hash);
+}
+
+// receives a pointer to `&hash->info`, so we can get `hash` out of it.
+TCHash* tchash_i_alloca_init_(TCHash* hash, const TCHashInfo* info)
+{
+    hash->info = info;
+    info->cb_init(hash);
+    return hash;
+}
+void tchash_deinit(TCHash* hash)
+{
+    if(!hash) return;
+    const TCHashInfo* info = hash->info;
+    if(info && info->cb_deinit)
+        info->cb_deinit(hash);
+}
+
+void tchash_reset(TCHash* hash)
+{
+    const TCHashInfo* info = hash->info;
+    if(info->cb_reset)
+        info->cb_reset(hash);
+    else
+    {
+        if(info->cb_deinit)
+            info->cb_deinit(hash);
+        info->cb_init(hash);
+    }
+}
+void tchash_process(TCHash* hash, const void* data, size_t datalen)
+{
+    const TCHashInfo* info = hash->info;
+    info->cb_process(hash, data, datalen);
+}
+void* tchash_get(const TCHash* hash, void* digest, size_t digestlen)
+{
+    const TCHashInfo* info = hash->info;
+    assert(!info->max_digest_size || digestlen <= info->max_digest_size && "digestlen too large");
+    assert(info->dynamic_digest_size || digestlen == info->max_digest_size && "invalid digestlen for hash; perhaps you need `tchash_get_trunc`?");
+    info->cb_get(hash, digest, digestlen);
+    return digest;
+}
+void* tchash_get_trunc(const TCHash* hash, void* digest, size_t digestlen)
+{
+    const TCHashInfo* info = hash->info;
+    assert(!info->max_digest_size || digestlen <= info->max_digest_size && "digestlen too large");
+
+    if(info->dynamic_digest_size || digestlen == info->max_digest_size)
+    {
+        info->cb_get(hash, digest, digestlen);
+        return digest;
+    }
+
+    // non-dynamic digest size and digestlen is too small => allocate temporary, then copy
+    void* digest_full = TC_ALLOCA(info->max_digest_size);
+    info->cb_get(hash, digest_full, info->max_digest_size);
+    memcpy(digest, digest_full, digestlen);
+    return digest;
+}
+void* tchash_oneshot_info(const TCHashInfo* info, void* digest, size_t digestlen, const void* data, size_t datalen)
+{
+    assert(info && "tchash_oneshot_* needs a valid hash type");
+    assert(!info->max_digest_size || digestlen <= info->max_digest_size && "digestlen too large");
+    assert(info->dynamic_digest_size || digestlen == info->max_digest_size && "invalid digestlen for hash; perhaps you need `tchash_oneshot_trunc_*`?");
+
+    if(info->cb_oneshot)
+    {
+        info->cb_oneshot(info, digest, digestlen, data, datalen);
+        return digest;
+    }
+
+    // cb_oneshot isn't available, use fallback path
+
+    TCHash* hash = tchash_alloca_info(info);
+    info->cb_process(hash, data, datalen);
+    info->cb_get(hash, digest, digestlen);
+    tchash_deinit(hash);
+    return digest;
+}
+void* tchash_oneshot_name(const char* name, void* digest, size_t digestlen, const void* data, size_t datalen)
+{
+    return tchash_oneshot_info(tchash_find_info_by_name(name), digest, digestlen, data, datalen);
+}
+void* tchash_oneshot_trunc_info(const TCHashInfo* info, void* digest, size_t digestlen, const void* data, size_t datalen)
+{
+    assert(info && "tchash_oneshot_* needs a valid hash type");
+    assert(!info->max_digest_size || digestlen <= info->max_digest_size && "digestlen too large");
+
+    if(info->dynamic_digest_size || digestlen == info->max_digest_size)
+        return tchash_oneshot_info(info, digest, digestlen, data, datalen);
+
+    // non-dynamic digest size and digestlen is too small => allocate temporary, then copy
+    void* digest_full = TC_ALLOCA(info->max_digest_size);
+    tchash_oneshot_info(info, digest_full, info->max_digest_size, data, datalen);
+    memcpy(digest, digest_full, digestlen);
+    return digest;
+}
+void* tchash_oneshot_trunc_name(const char* name, void* digest, size_t digestlen, const void* data, size_t datalen)
+{
+    return tchash_oneshot_trunc_info(tchash_find_info_by_name(name), digest, digestlen, data, datalen);
+}
+
 
 #define TCHASH_I_MIN(x,y)   ((x)<(y)?(x):(y))
 
@@ -805,7 +1343,7 @@ static uint64_t tchash_i_rotr64(uint64_t x, int k)
     memcpy(M, LHASH->buf.M, i * sizeof(*M));                                   \
     tchash_i_from_##ENDIAN##SIZE##arr(M, i);                                   \
                                                                                \
-    unsigned char* uptr = &LHASH->buf.b[i * sizeof(*M)];                       \
+    const unsigned char* uptr = &LHASH->buf.b[i * sizeof(*M)];                 \
     switch(blen & (sizeof(*M) - 1))                                            \
     {                                                                          \
     case 7: M[i++] = TCHASH_I_U##SIZE##_FROM_BYTES_##ENDIAN##_(uptr[0], uptr[1], uptr[2], uptr[3], uptr[4], uptr[5], uptr[6], (PAD)); break;\
@@ -853,13 +1391,14 @@ int tchash_secure_eq(const void* a, const void* b, size_t len)
         res |= *ua++ ^ *ub++;
     return !!res;
 }
-size_t tchash_xstring_from_bytes(char* str, const void* data, size_t dlen, int uppercase)
+
+size_t tchash_hex_from_bytes(char* str, const void* data, size_t datalen, bool uppercase)
 {
     static const char XVals[2][16] = { "0123456789abcdef", "0123456789ABCDEF" };
     uppercase = !!uppercase; /* convert to 0 or 1 */
 
     const unsigned char* udata = TC__VOID_CAST(const unsigned char*,data);
-    size_t clen = dlen;
+    size_t clen = datalen;
     while(clen--)
     {
         *str++ = XVals[uppercase][*udata >> 4];
@@ -867,9 +1406,9 @@ size_t tchash_xstring_from_bytes(char* str, const void* data, size_t dlen, int u
         udata++;
     }
     *str = 0;
-    return 2 * dlen;
+    return 2 * datalen;
 }
-size_t tchash_bytes_from_xstring(void* data, const char* str, int slen)
+size_t tchash_bytes_from_hex(void* data, const char* str, ptrdiff_t slen)
 {
     unsigned char* udata = TC__VOID_CAST(unsigned char*,data);
     if(slen < 0) slen = strlen(str);
@@ -899,10 +1438,10 @@ size_t tchash_bytes_from_xstring(void* data, const char* str, int slen)
     }
     return d;
 }
+
 #define TCHASH_I_BASE64_DEF62   '+'
 #define TCHASH_I_BASE64_DEF63   '/'
 #define TCHASH_I_BASE64_DEFPAD  '='
-
 static char tchash_i_to_base64char(unsigned char b, int c62, int c63)
 {
     static const char BaseChars[62] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
@@ -1116,11 +1655,44 @@ void tchash_md5_process(TCHash_MD5* md5, const void* data, size_t dlen)
 {
     TCHASH_I_PROCESS_BODY_(md5,MD5,le,32,{md5->total += dlen;});
 }
-void* tchash_md5_get(TCHash_MD5* md5, void* digest)
+void* tchash_md5_get(const TCHash_MD5* md5, void* digest)
 {
     TCHASH_I_GET_BODY_(md5,MD5,le,32,{M[14] = md5->total << 3; M[15] = md5->total >> 29;},sizeof(h)/sizeof(*h),sizeof(h));
 }
 void* tchash_md5(void* digest, const void* data, size_t dlen) { TCHASH_I_SIMPLE_BODY_(md5,MD5) }
+
+static void tchash_i_md5_cb_init(TCHash* hash)
+{
+    tchash_md5_init(TC__REINTERPRET_CAST(TCHash_MD5*,hash->state));
+}
+static void tchash_i_md5_cb_process(TCHash* hash, const void* data, size_t datalen)
+{
+    tchash_md5_process(TC__REINTERPRET_CAST(TCHash_MD5*,hash->state), data, datalen);
+}
+static void tchash_i_md5_cb_get(const TCHash* hash, void* digest, size_t digestlen)
+{
+    assert(digestlen == TCHASH_MD5_DIGEST_SIZE && "invalid internal digestlen");
+    tchash_md5_get(TC__REINTERPRET_CAST(const TCHash_MD5*,hash->state), digest);
+}
+static void tchash_i_md5_cb_oneshot(const TCHashInfo* hinfo, void* digest, size_t digestlen, const void* data, size_t datalen)
+{
+    assert(digestlen == TCHASH_MD5_DIGEST_SIZE && "invalid internal digestlen");
+    tchash_md5(digest, data, datalen);
+}
+const TCHashInfo tchash_md5_info = {
+    .name = "MD5",
+
+    .state_size = sizeof(TCHash_MD5),
+    .block_size = TCHASH_MD5_BLOCK_SIZE,
+    .max_digest_size = TCHASH_MD5_DIGEST_SIZE,
+    .dynamic_digest_size = false,
+
+    .cb_init = tchash_i_md5_cb_init,
+    .cb_process = tchash_i_md5_cb_process,
+    .cb_get = tchash_i_md5_cb_get,
+
+    .cb_oneshot = tchash_i_md5_cb_oneshot,
+};
 
 
 
@@ -1336,29 +1908,93 @@ void tchash_tiger_process(TCHash_Tiger* tiger, const void* data, size_t dlen)
 {
     TCHASH_I_PROCESS_BODY_(tiger,Tiger,le,64,{tiger->total += dlen;});
 }
-void* tchash_tiger_get(TCHash_Tiger* tiger, void* digest, size_t digestlen)
+void* tchash_tiger_get(const TCHash_Tiger* tiger, void* digest, size_t digestlen)
 {
     TCHASH_I_GETPAD_BODY_(tiger,Tiger,le,64,{M[7] = tiger->total << 3;},(digestlen + (sizeof(h) - 1))/sizeof(*h),digestlen,0x01);
 }
-void* tchash_tiger192_get(TCHash_Tiger* tiger, void* digest) { return tchash_tiger_get(tiger, digest, TCHASH_TIGER192_DIGEST_SIZE); }
-void* tchash_tiger160_get(TCHash_Tiger* tiger, void* digest) { return tchash_tiger_get(tiger, digest, TCHASH_TIGER160_DIGEST_SIZE); }
-void* tchash_tiger128_get(TCHash_Tiger* tiger, void* digest) { return tchash_tiger_get(tiger, digest, TCHASH_TIGER128_DIGEST_SIZE); }
+void* tchash_tiger192_get(const TCHash_Tiger* tiger, void* digest) { return tchash_tiger_get(tiger, digest, TCHASH_TIGER192_DIGEST_SIZE); }
+void* tchash_tiger160_get(const TCHash_Tiger* tiger, void* digest) { return tchash_tiger_get(tiger, digest, TCHASH_TIGER160_DIGEST_SIZE); }
+void* tchash_tiger128_get(const TCHash_Tiger* tiger, void* digest) { return tchash_tiger_get(tiger, digest, TCHASH_TIGER128_DIGEST_SIZE); }
 void* tchash_tiger(void* digest, size_t digestlen, const void* data, size_t dlen) { TC__ASSERT(digestlen <= TCHASH_TIGER192_DIGEST_SIZE); TCHASH_I_SIMPLELEN_BODY_(tiger,Tiger) }
 void* tchash_tiger192(void* digest, const void* data, size_t dlen) { return tchash_tiger(digest, TCHASH_TIGER192_DIGEST_SIZE, data, dlen); }
 void* tchash_tiger160(void* digest, const void* data, size_t dlen) { return tchash_tiger(digest, TCHASH_TIGER160_DIGEST_SIZE, data, dlen); }
 void* tchash_tiger128(void* digest, const void* data, size_t dlen) { return tchash_tiger(digest, TCHASH_TIGER128_DIGEST_SIZE, data, dlen); }
 
-void* tchash_tiger2_get(TCHash_Tiger* tiger, void* digest, size_t digestlen)
+static void tchash_i_tiger_cb_init(TCHash* hash)
+{
+    tchash_tiger_init(TC__REINTERPRET_CAST(TCHash_Tiger*,hash->state));
+}
+static void tchash_i_tiger_cb_process(TCHash* hash, const void* data, size_t datalen)
+{
+    tchash_tiger_process(TC__REINTERPRET_CAST(TCHash_Tiger*,hash->state), data, datalen);
+}
+static void tchash_i_tiger_cb_get(const TCHash* hash, void* digest, size_t digestlen)
+{
+    tchash_tiger_get(TC__REINTERPRET_CAST(const TCHash_Tiger*,hash->state), digest, digestlen);
+}
+static void tchash_i_tiger_cb_oneshot(const TCHashInfo* hinfo, void* digest, size_t digestlen, const void* data, size_t datalen)
+{
+    tchash_tiger(digest, digestlen, data, datalen);
+}
+const TCHashInfo tchash_tiger_info = {
+    .name = "Tiger",
+    .state_size = sizeof(TCHash_Tiger),
+    .block_size = TCHASH_TIGER_BLOCK_SIZE,
+    .max_digest_size = TCHASH_TIGER192_DIGEST_SIZE,
+    .dynamic_digest_size = true,
+
+    .cb_init = tchash_i_tiger_cb_init,
+    .cb_process = tchash_i_tiger_cb_process,
+    .cb_get = tchash_i_tiger_cb_get,
+
+    .cb_oneshot = tchash_i_tiger_cb_oneshot,
+};
+
+
+
+void* tchash_tiger2_get(const TCHash_Tiger2* tiger, void* digest, size_t digestlen)
 {
     TCHASH_I_GETPAD_BODY_(tiger,Tiger,le,64,{M[7] = tiger->total << 3;},(digestlen + (sizeof(h) - 1))/sizeof(*h),digestlen,0x80);
 }
-void* tchash_tiger2_192_get(TCHash_Tiger* tiger, void* digest) { return tchash_tiger2_get(tiger, digest, TCHASH_TIGER2_192_DIGEST_SIZE); }
-void* tchash_tiger2_160_get(TCHash_Tiger* tiger, void* digest) { return tchash_tiger2_get(tiger, digest, TCHASH_TIGER2_160_DIGEST_SIZE); }
-void* tchash_tiger2_128_get(TCHash_Tiger* tiger, void* digest) { return tchash_tiger2_get(tiger, digest, TCHASH_TIGER2_128_DIGEST_SIZE); }
+void* tchash_tiger2_192_get(const TCHash_Tiger2* tiger, void* digest) { return tchash_tiger2_get(tiger, digest, TCHASH_TIGER2_192_DIGEST_SIZE); }
+void* tchash_tiger2_160_get(const TCHash_Tiger2* tiger, void* digest) { return tchash_tiger2_get(tiger, digest, TCHASH_TIGER2_160_DIGEST_SIZE); }
+void* tchash_tiger2_128_get(const TCHash_Tiger2* tiger, void* digest) { return tchash_tiger2_get(tiger, digest, TCHASH_TIGER2_128_DIGEST_SIZE); }
 void* tchash_tiger2(void* digest, size_t digestlen, const void* data, size_t dlen) { TC__ASSERT(digestlen <= TCHASH_TIGER192_DIGEST_SIZE); TCHASH_I_SIMPLELEN_BODY_(tiger2,Tiger2) }
 void* tchash_tiger2_192(void* digest, const void* data, size_t dlen) { return tchash_tiger2(digest, TCHASH_TIGER2_192_DIGEST_SIZE, data, dlen); }
 void* tchash_tiger2_160(void* digest, const void* data, size_t dlen) { return tchash_tiger2(digest, TCHASH_TIGER2_160_DIGEST_SIZE, data, dlen); }
 void* tchash_tiger2_128(void* digest, const void* data, size_t dlen) { return tchash_tiger2(digest, TCHASH_TIGER2_128_DIGEST_SIZE, data, dlen); }
+
+static void tchash_i_tiger2_cb_init(TCHash* hash)
+{
+    tchash_tiger2_init(TC__REINTERPRET_CAST(TCHash_Tiger2*,hash->state));
+}
+static void tchash_i_tiger2_cb_process(TCHash* hash, const void* data, size_t datalen)
+{
+    tchash_tiger2_process(TC__REINTERPRET_CAST(TCHash_Tiger2*,hash->state), data, datalen);
+}
+static void tchash_i_tiger2_cb_get(const TCHash* hash, void* digest, size_t digestlen)
+{
+    tchash_tiger2_get(TC__REINTERPRET_CAST(const TCHash_Tiger2*,hash->state), digest, digestlen);
+}
+static void tchash_i_tiger2_cb_oneshot(const TCHashInfo* hinfo, void* digest, size_t digestlen, const void* data, size_t datalen)
+{
+    tchash_tiger2(digest, digestlen, data, datalen);
+}
+const TCHashInfo tchash_tiger2_info = {
+    .name = "Tiger2",
+    .state_size = sizeof(TCHash_Tiger2),
+    .block_size = TCHASH_TIGER2_BLOCK_SIZE,
+    .max_digest_size = TCHASH_TIGER2_192_DIGEST_SIZE,
+    .dynamic_digest_size = true,
+
+    .cb_init = tchash_i_tiger2_cb_init,
+    .cb_process = tchash_i_tiger2_cb_process,
+    .cb_get = tchash_i_tiger2_cb_get,
+
+    .cb_oneshot = tchash_i_tiger2_cb_oneshot,
+};
+
+
 
 #define SWAP_(T,x,y) do { T tmp_ = (x); x = (y); y = tmp_; } while(0)
 static const uint32_t tchash_i_ripemd128_InitH[2*4] = {
@@ -1455,11 +2091,49 @@ void tchash_ripemd128_process(TCHash_RIPEMD128* ripemd128, const void* data, siz
 {
     TCHASH_I_PROCESS_BODY_(ripemd128,RIPEMD128,le,32,{ripemd128->total += dlen;})
 }
-void* tchash_ripemd128_get(TCHash_RIPEMD128* ripemd128, void* digest)
+void* tchash_ripemd128_get(const TCHash_RIPEMD128* ripemd128, void* digest)
 {
     TCHASH_I_GET_BODY_(ripemd128,RIPEMD128,le,32,{M[14] = ripemd128->total << 3; M[15] = ripemd128->total >> 29;},sizeof(h)/sizeof(*h),sizeof(h))
 }
 void* tchash_ripemd128(void* digest, const void* data, size_t dlen) { TCHASH_I_SIMPLE_BODY_(ripemd128,RIPEMD128) }
+
+static void tchash_i_ripemd128_cb_init(TCHash* hash)
+{
+    tchash_ripemd128_init(TC__REINTERPRET_CAST(TCHash_RIPEMD128*,hash->state));
+}
+static void tchash_i_ripemd128_cb_process(TCHash* hash, const void* data, size_t datalen)
+{
+    tchash_ripemd128_process(TC__REINTERPRET_CAST(TCHash_RIPEMD128*,hash->state), data, datalen);
+}
+static void tchash_i_ripemd128_cb_get(const TCHash* hash, void* digest, size_t digestlen)
+{
+    assert(digestlen == TCHASH_RIPEMD128_DIGEST_SIZE && "invalid internal digestlen");
+    tchash_ripemd128_get(TC__REINTERPRET_CAST(const TCHash_RIPEMD128*,hash->state), digest);
+}
+static void tchash_i_ripemd128_cb_oneshot(const TCHashInfo* hinfo, void* digest, size_t digestlen, const void* data, size_t datalen)
+{
+    assert(digestlen == TCHASH_RIPEMD128_DIGEST_SIZE && "invalid internal digestlen");
+    tchash_ripemd128(digest, data, datalen);
+}
+const TCHashInfo tchash_ripemd128_info = {
+    .name = "RIPEMD-128",
+    .aliases = {
+        "RIPEMD128",
+    },
+
+    .state_size = sizeof(TCHash_RIPEMD128),
+    .block_size = TCHASH_RIPEMD128_BLOCK_SIZE,
+    .max_digest_size = TCHASH_RIPEMD128_DIGEST_SIZE,
+    .dynamic_digest_size = false,
+
+    .cb_init = tchash_i_ripemd128_cb_init,
+    .cb_process = tchash_i_ripemd128_cb_process,
+    .cb_get = tchash_i_ripemd128_cb_get,
+
+    .cb_oneshot = tchash_i_ripemd128_cb_oneshot,
+};
+
+
 
 TCHash_RIPEMD160* tchash_ripemd160_init(TCHash_RIPEMD160* ripemd160)
 {
@@ -1497,11 +2171,48 @@ void tchash_ripemd160_process(TCHash_RIPEMD160* ripemd160, const void* data, siz
 {
     TCHASH_I_PROCESS_BODY_(ripemd160,RIPEMD160,le,32,{ripemd160->total += dlen;})
 }
-void* tchash_ripemd160_get(TCHash_RIPEMD160* ripemd160, void* digest)
+void* tchash_ripemd160_get(const TCHash_RIPEMD160* ripemd160, void* digest)
 {
     TCHASH_I_GET_BODY_(ripemd160,RIPEMD160,le,32,{M[14] = ripemd160->total << 3; M[15] = ripemd160->total >> 29;},sizeof(h)/sizeof(*h),sizeof(h))
 }
 void* tchash_ripemd160(void* digest, const void* data, size_t dlen) { TCHASH_I_SIMPLE_BODY_(ripemd160,RIPEMD160) }
+
+static void tchash_i_ripemd160_cb_init(TCHash* hash)
+{
+    tchash_ripemd160_init(TC__REINTERPRET_CAST(TCHash_RIPEMD160*,hash->state));
+}
+static void tchash_i_ripemd160_cb_process(TCHash* hash, const void* data, size_t datalen)
+{
+    tchash_ripemd160_process(TC__REINTERPRET_CAST(TCHash_RIPEMD160*,hash->state), data, datalen);
+}
+static void tchash_i_ripemd160_cb_get(const TCHash* hash, void* digest, size_t digestlen)
+{
+    assert(digestlen == TCHASH_RIPEMD160_DIGEST_SIZE && "invalid internal digestlen");
+    tchash_ripemd160_get(TC__REINTERPRET_CAST(const TCHash_RIPEMD160*,hash->state), digest);
+}
+static void tchash_i_ripemd160_cb_oneshot(const TCHashInfo* hinfo, void* digest, size_t digestlen, const void* data, size_t datalen)
+{
+    assert(digestlen == TCHASH_RIPEMD160_DIGEST_SIZE && "invalid internal digestlen");
+    tchash_ripemd160(digest, data, datalen);
+}
+const TCHashInfo tchash_ripemd160_info = {
+    .name = "RIPEMD-160",
+    .aliases = {
+        "RIPEMD160",
+    },
+
+    .state_size = sizeof(TCHash_RIPEMD160),
+    .block_size = TCHASH_RIPEMD160_BLOCK_SIZE,
+    .max_digest_size = TCHASH_RIPEMD160_DIGEST_SIZE,
+    .dynamic_digest_size = false,
+
+    .cb_init = tchash_i_ripemd160_cb_init,
+    .cb_process = tchash_i_ripemd160_cb_process,
+    .cb_get = tchash_i_ripemd160_cb_get,
+
+    .cb_oneshot = tchash_i_ripemd160_cb_oneshot,
+};
+
 
 TCHash_RIPEMD256* tchash_ripemd256_init(TCHash_RIPEMD256* ripemd256)
 {
@@ -1543,11 +2254,48 @@ void tchash_ripemd256_process(TCHash_RIPEMD256* ripemd256, const void* data, siz
 {
     TCHASH_I_PROCESS_BODY_(ripemd256,RIPEMD256,le,32,{ripemd256->total += dlen;})
 }
-void* tchash_ripemd256_get(TCHash_RIPEMD256* ripemd256, void* digest)
+void* tchash_ripemd256_get(const TCHash_RIPEMD256* ripemd256, void* digest)
 {
     TCHASH_I_GET_BODY_(ripemd256,RIPEMD256,le,32,{M[14] = ripemd256->total << 3; M[15] = ripemd256->total >> 29;},sizeof(h)/sizeof(*h),sizeof(h))
 }
 void* tchash_ripemd256(void* digest, const void* data, size_t dlen) { TCHASH_I_SIMPLE_BODY_(ripemd256,RIPEMD256) }
+
+static void tchash_i_ripemd256_cb_init(TCHash* hash)
+{
+    tchash_ripemd256_init(TC__REINTERPRET_CAST(TCHash_RIPEMD256*,hash->state));
+}
+static void tchash_i_ripemd256_cb_process(TCHash* hash, const void* data, size_t datalen)
+{
+    tchash_ripemd256_process(TC__REINTERPRET_CAST(TCHash_RIPEMD256*,hash->state), data, datalen);
+}
+static void tchash_i_ripemd256_cb_get(const TCHash* hash, void* digest, size_t digestlen)
+{
+    assert(digestlen == TCHASH_RIPEMD256_DIGEST_SIZE && "invalid internal digestlen");
+    tchash_ripemd256_get(TC__REINTERPRET_CAST(const TCHash_RIPEMD256*,hash->state), digest);
+}
+static void tchash_i_ripemd256_cb_oneshot(const TCHashInfo* hinfo, void* digest, size_t digestlen, const void* data, size_t datalen)
+{
+    assert(digestlen == TCHASH_RIPEMD256_DIGEST_SIZE && "invalid internal digestlen");
+    tchash_ripemd256(digest, data, datalen);
+}
+const TCHashInfo tchash_ripemd256_info = {
+    .name = "RIPEMD-256",
+    .aliases = {
+        "RIPEMD256",
+    },
+
+    .state_size = sizeof(TCHash_RIPEMD256),
+    .block_size = TCHASH_RIPEMD256_BLOCK_SIZE,
+    .max_digest_size = TCHASH_RIPEMD256_DIGEST_SIZE,
+    .dynamic_digest_size = false,
+
+    .cb_init = tchash_i_ripemd256_cb_init,
+    .cb_process = tchash_i_ripemd256_cb_process,
+    .cb_get = tchash_i_ripemd256_cb_get,
+
+    .cb_oneshot = tchash_i_ripemd256_cb_oneshot,
+};
+
 
 TCHash_RIPEMD320* tchash_ripemd320_init(TCHash_RIPEMD320* ripemd320)
 {
@@ -1590,12 +2338,47 @@ void tchash_ripemd320_process(TCHash_RIPEMD320* ripemd320, const void* data, siz
 {
     TCHASH_I_PROCESS_BODY_(ripemd320,RIPEMD320,le,32,{ripemd320->total += dlen;})
 }
-void* tchash_ripemd320_get(TCHash_RIPEMD320* ripemd320, void* digest)
+void* tchash_ripemd320_get(const TCHash_RIPEMD320* ripemd320, void* digest)
 {
     TCHASH_I_GET_BODY_(ripemd320,RIPEMD320,le,32,{M[14] = ripemd320->total << 3; M[15] = ripemd320->total >> 29;},sizeof(h)/sizeof(*h),sizeof(h))
 }
 void* tchash_ripemd320(void* digest, const void* data, size_t dlen) { TCHASH_I_SIMPLE_BODY_(ripemd320,RIPEMD320) }
 
+static void tchash_i_ripemd320_cb_init(TCHash* hash)
+{
+    tchash_ripemd320_init(TC__REINTERPRET_CAST(TCHash_RIPEMD320*,hash->state));
+}
+static void tchash_i_ripemd320_cb_process(TCHash* hash, const void* data, size_t datalen)
+{
+    tchash_ripemd320_process(TC__REINTERPRET_CAST(TCHash_RIPEMD320*,hash->state), data, datalen);
+}
+static void tchash_i_ripemd320_cb_get(const TCHash* hash, void* digest, size_t digestlen)
+{
+    assert(digestlen == TCHASH_RIPEMD320_DIGEST_SIZE && "invalid internal digestlen");
+    tchash_ripemd320_get(TC__REINTERPRET_CAST(const TCHash_RIPEMD320*,hash->state), digest);
+}
+static void tchash_i_ripemd320_cb_oneshot(const TCHashInfo* hinfo, void* digest, size_t digestlen, const void* data, size_t datalen)
+{
+    assert(digestlen == TCHASH_RIPEMD320_DIGEST_SIZE && "invalid internal digestlen");
+    tchash_ripemd320(digest, data, datalen);
+}
+const TCHashInfo tchash_ripemd320_info = {
+    .name = "RIPEMD-320",
+    .aliases = {
+        "RIPEMD320",
+    },
+
+    .state_size = sizeof(TCHash_RIPEMD320),
+    .block_size = TCHASH_RIPEMD320_BLOCK_SIZE,
+    .max_digest_size = TCHASH_RIPEMD320_DIGEST_SIZE,
+    .dynamic_digest_size = false,
+
+    .cb_init = tchash_i_ripemd320_cb_init,
+    .cb_process = tchash_i_ripemd320_cb_process,
+    .cb_get = tchash_i_ripemd320_cb_get,
+
+    .cb_oneshot = tchash_i_ripemd320_cb_oneshot,
+};
 
 
 TCHash_SHA1* tchash_sha1_init(TCHash_SHA1* sha1)
@@ -1665,11 +2448,47 @@ void tchash_sha1_process(TCHash_SHA1* sha1, const void* data, size_t dlen)
 {
     TCHASH_I_PROCESS_BODY_(sha1,SHA1,be,32,{sha1->total += dlen;});
 }
-void* tchash_sha1_get(TCHash_SHA1* sha1, void* digest)
+void* tchash_sha1_get(const TCHash_SHA1* sha1, void* digest)
 {
     TCHASH_I_GET_BODY_(sha1,SHA1,be,32,{M[14] = sha1->total >> 29; M[15] = sha1->total << 3;},sizeof(h)/sizeof(*h),sizeof(h))
 }
 void* tchash_sha1(void* digest, const void* data, size_t dlen) { TCHASH_I_SIMPLE_BODY_(sha1,SHA1) }
+
+static void tchash_i_sha1_cb_init(TCHash* hash)
+{
+    tchash_sha1_init(TC__REINTERPRET_CAST(TCHash_SHA1*,hash->state));
+}
+static void tchash_i_sha1_cb_process(TCHash* hash, const void* data, size_t datalen)
+{
+    tchash_sha1_process(TC__REINTERPRET_CAST(TCHash_SHA1*,hash->state), data, datalen);
+}
+static void tchash_i_sha1_cb_get(const TCHash* hash, void* digest, size_t digestlen)
+{
+    assert(digestlen == TCHASH_SHA1_DIGEST_SIZE && "invalid internal digestlen");
+    tchash_sha1_get(TC__REINTERPRET_CAST(const TCHash_SHA1*,hash->state), digest);
+}
+static void tchash_i_sha1_cb_oneshot(const TCHashInfo* hinfo, void* digest, size_t digestlen, const void* data, size_t datalen)
+{
+    assert(digestlen == TCHASH_SHA1_DIGEST_SIZE && "invalid internal digestlen");
+    tchash_sha1(digest, data, datalen);
+}
+const TCHashInfo tchash_sha1_info = {
+    .name = "SHA-1",
+    .aliases = {
+        "SHA1",
+    },
+
+    .state_size = sizeof(TCHash_SHA1),
+    .block_size = TCHASH_SHA1_BLOCK_SIZE,
+    .max_digest_size = TCHASH_SHA1_DIGEST_SIZE,
+    .dynamic_digest_size = false,
+
+    .cb_init = tchash_i_sha1_cb_init,
+    .cb_process = tchash_i_sha1_cb_process,
+    .cb_get = tchash_i_sha1_cb_get,
+
+    .cb_oneshot = tchash_i_sha1_cb_oneshot,
+};
 
 
 
@@ -1742,11 +2561,49 @@ void tchash_sha2_256_process(TCHash_SHA2_256* sha2_256, const void* data, size_t
 {
     TCHASH_I_PROCESS_BODY_(sha2_256,SHA2_256,be,32,{sha2_256->total += dlen;});
 }
-void* tchash_sha2_256_get(TCHash_SHA2_256* sha2_256, void* digest)
+void* tchash_sha2_256_get(const TCHash_SHA2_256* sha2_256, void* digest)
 {
     TCHASH_I_GET_BODY_(sha2_256,SHA2_256,be,32,{M[14] = sha2_256->total >> 29; M[15] = sha2_256->total << 3;},sizeof(h)/sizeof(*h),sizeof(h))
 }
 void* tchash_sha2_256(void* digest, const void* data, size_t dlen) { TCHASH_I_SIMPLE_BODY_(sha2_256,SHA2_256) }
+
+static void tchash_i_sha2_256_cb_init(TCHash* hash)
+{
+    tchash_sha2_256_init(TC__REINTERPRET_CAST(TCHash_SHA2_256*,hash->state));
+}
+static void tchash_i_sha2_256_cb_process(TCHash* hash, const void* data, size_t datalen)
+{
+    tchash_sha2_256_process(TC__REINTERPRET_CAST(TCHash_SHA2_256*,hash->state), data, datalen);
+}
+static void tchash_i_sha2_256_cb_get(const TCHash* hash, void* digest, size_t digestlen)
+{
+    assert(digestlen == TCHASH_SHA2_256_DIGEST_SIZE && "invalid internal digestlen");
+    tchash_sha2_256_get(TC__REINTERPRET_CAST(const TCHash_SHA2_256*,hash->state), digest);
+}
+static void tchash_i_sha2_256_cb_oneshot(const TCHashInfo* hinfo, void* digest, size_t digestlen, const void* data, size_t datalen)
+{
+    assert(digestlen == TCHASH_SHA2_256_DIGEST_SIZE && "invalid internal digestlen");
+    tchash_sha2_256(digest, data, datalen);
+}
+const TCHashInfo tchash_sha2_256_info = {
+    .name = "SHA-256",
+    .aliases = {
+        "SHA256",
+        "SHA-2-256", "SHA2-256",
+    },
+
+    .state_size = sizeof(TCHash_SHA2_256),
+    .block_size = TCHASH_SHA2_256_BLOCK_SIZE,
+    .max_digest_size = TCHASH_SHA2_256_DIGEST_SIZE,
+    .dynamic_digest_size = false,
+
+    .cb_init = tchash_i_sha2_256_cb_init,
+    .cb_process = tchash_i_sha2_256_cb_process,
+    .cb_get = tchash_i_sha2_256_cb_get,
+
+    .cb_oneshot = tchash_i_sha2_256_cb_oneshot,
+};
+
 
 TCHash_SHA2_512* tchash_sha2_512_init(TCHash_SHA2_512* sha2)
 {
@@ -1827,7 +2684,7 @@ void tchash_sha2_512_process(TCHash_SHA2_512* sha2_512, const void* data, size_t
 {
     TCHASH_I_PROCESS_BODY_(sha2_512,SHA2_512,be,64,{uint64_t prevl = sha2_512->total.lh[0]; sha2_512->total.lh[0] += dlen; if(sha2_512->total.lh[0] < prevl) sha2_512->total.lh[1]++;});
 }
-void* tchash_sha2_512_get(TCHash_SHA2_512* sha2_512, void* digest)
+void* tchash_sha2_512_get(const TCHash_SHA2_512* sha2_512, void* digest)
 {
     TCHASH_I_GET_BODY_(sha2_512,SHA2_512,be,64,{M[14] = (sha2_512->total.lh[1] << 3) | (sha2_512->total.lh[0] >> (64-3)); M[15] = sha2_512->total.lh[0] << 3;},sizeof(h)/sizeof(*h),sizeof(h))
 }
@@ -1842,51 +2699,198 @@ TCHash_SHA2_512* tchash_sha2_512_init_ivgen(TCHash_SHA2_512* sha2)
     return sha2;
 }
 
-TCHash_SHA2_224* tchash_sha2_224_init(TCHash_SHA2_224* sha2)
+static void tchash_i_sha2_512_cb_init(TCHash* hash)
+{
+    tchash_sha2_512_init(TC__REINTERPRET_CAST(TCHash_SHA2_512*,hash->state));
+}
+static void tchash_i_sha2_512_cb_process(TCHash* hash, const void* data, size_t datalen)
+{
+    tchash_sha2_512_process(TC__REINTERPRET_CAST(TCHash_SHA2_512*,hash->state), data, datalen);
+}
+static void tchash_i_sha2_512_cb_get(const TCHash* hash, void* digest, size_t digestlen)
+{
+    assert(digestlen == TCHASH_SHA2_512_DIGEST_SIZE && "invalid internal digestlen");
+    tchash_sha2_512_get(TC__REINTERPRET_CAST(const TCHash_SHA2_512*,hash->state), digest);
+}
+static void tchash_i_sha2_512_cb_oneshot(const TCHashInfo* hinfo, void* digest, size_t digestlen, const void* data, size_t datalen)
+{
+    assert(digestlen == TCHASH_SHA2_512_DIGEST_SIZE && "invalid internal digestlen");
+    tchash_sha2_512(digest, data, datalen);
+}
+const TCHashInfo tchash_sha2_512_info = {
+    .name = "SHA-512",
+    .aliases = {
+        "SHA512",
+        "SHA-2-512", "SHA2-512",
+    },
+
+    .state_size = sizeof(TCHash_SHA2_512),
+    .block_size = TCHASH_SHA2_512_BLOCK_SIZE,
+    .max_digest_size = TCHASH_SHA2_512_DIGEST_SIZE,
+    .dynamic_digest_size = false,
+
+    .cb_init = tchash_i_sha2_512_cb_init,
+    .cb_process = tchash_i_sha2_512_cb_process,
+    .cb_get = tchash_i_sha2_512_cb_get,
+
+    .cb_oneshot = tchash_i_sha2_512_cb_oneshot,
+};
+static void tchash_i_sha2_512_ivgen_cb_init(TCHash* hash)
+{
+    tchash_sha2_512_init_ivgen(TC__REINTERPRET_CAST(TCHash_SHA2_512*,hash->state));
+}
+static void tchash_i_sha2_512_ivgen_cb_oneshot(const TCHashInfo* hinfo, void* digest, size_t digestlen, const void* data, size_t datalen)
+{
+    assert(digestlen == TCHASH_SHA2_512_DIGEST_SIZE && "invalid internal digestlen");
+    TCHash_SHA2_512 sha2_512;
+    tchash_sha2_512_init_ivgen(&sha2_512);
+    tchash_sha2_512_process(&sha2_512, data, datalen);
+    tchash_sha2_512_get(&sha2_512, digest);
+}
+const TCHashInfo tchash_sha2_512_ivgen_info = {
+    .name = "SHA-512-ivgen",
+    .aliases = {
+        "SHA-2-512-ivgen", "SHA512-ivgen",
+    },
+
+    .state_size = sizeof(TCHash_SHA2_512),
+    .block_size = TCHASH_SHA2_512_BLOCK_SIZE,
+    .max_digest_size = TCHASH_SHA2_512_DIGEST_SIZE,
+    .dynamic_digest_size = false,
+
+    .cb_init = tchash_i_sha2_512_ivgen_cb_init,
+    .cb_process = tchash_i_sha2_512_cb_process,
+    .cb_get = tchash_i_sha2_512_cb_get,
+
+    .cb_oneshot = tchash_i_sha2_512_ivgen_cb_oneshot,
+};
+
+
+TCHash_SHA2_224* tchash_sha2_224_init(TCHash_SHA2_224* sha2_224)
 {
     static const uint32_t InitH[] = { UINT32_C(0xc1059ed8), UINT32_C(0x367cd507), UINT32_C(0x3070dd17), UINT32_C(0xf70e5939), UINT32_C(0xffc00b31), UINT32_C(0x68581511), UINT32_C(0x64f98fa7), UINT32_C(0xbefa4fa4) };
-    if(!sha2) return NULL;
+    if(!sha2_224) return NULL;
 
-    sha2->sha2_256.total = 0;
-    memcpy(sha2->sha2_256.h, InitH, sizeof(InitH));
-    sha2->sha2_256.blen = 0;
+    sha2_224->total = 0;
+    memcpy(sha2_224->h, InitH, sizeof(InitH));
+    sha2_224->blen = 0;
 
-    return sha2;
+    return sha2_224;
 }
 void tchash_sha2_224_process(TCHash_SHA2_224* sha2_224, const void* data, size_t dlen)
 {
-    tchash_sha2_256_process(&sha2_224->sha2_256, data, dlen);
+    tchash_sha2_256_process(sha2_224, data, dlen);
 }
-void* tchash_sha2_224_get(TCHash_SHA2_224* sha2_224, void* digest)
+void* tchash_sha2_224_get(const TCHash_SHA2_224* sha2_224, void* digest)
 {
-    TCHash_SHA2_256* sha2_256 = &sha2_224->sha2_256;
+    const TCHash_SHA2_256* sha2_256 = sha2_224;
     TCHASH_I_GET_BODY_(sha2_256,SHA2_256,be,32,{M[14] = sha2_256->total >> 29; M[15] = sha2_256->total << 3;},sizeof(h)/sizeof(*h) - 1,TCHASH_SHA2_224_DIGEST_SIZE)
 }
 void* tchash_sha2_224(void* digest, const void* data, size_t dlen) { TCHASH_I_SIMPLE_BODY_(sha2_224,SHA2_224) }
 
-TCHash_SHA2_384* tchash_sha2_384_init(TCHash_SHA2_384* sha2)
+static void tchash_i_sha2_224_cb_init(TCHash* hash)
+{
+    tchash_sha2_224_init(TC__REINTERPRET_CAST(TCHash_SHA2_224*,hash->state));
+}
+static void tchash_i_sha2_224_cb_process(TCHash* hash, const void* data, size_t datalen)
+{
+    tchash_sha2_224_process(TC__REINTERPRET_CAST(TCHash_SHA2_224*,hash->state), data, datalen);
+}
+static void tchash_i_sha2_224_cb_get(const TCHash* hash, void* digest, size_t digestlen)
+{
+    assert(digestlen == TCHASH_SHA2_224_DIGEST_SIZE && "invalid internal digestlen");
+    tchash_sha2_224_get(TC__REINTERPRET_CAST(const TCHash_SHA2_224*,hash->state), digest);
+}
+static void tchash_i_sha2_224_cb_oneshot(const TCHashInfo* hinfo, void* digest, size_t digestlen, const void* data, size_t datalen)
+{
+    assert(digestlen == TCHASH_SHA2_224_DIGEST_SIZE && "invalid internal digestlen");
+    tchash_sha2_224(digest, data, datalen);
+}
+const TCHashInfo tchash_sha2_224_info = {
+    .name = "SHA-224",
+    .aliases = {
+        "SHA224",
+        "SHA-256/224", "SHA256/224",
+        "SHA-2-224", "SHA-2-256/224",
+        "SHA2-224", "SHA2-256/224",
+    },
+
+    .state_size = sizeof(TCHash_SHA2_224),
+    .block_size = TCHASH_SHA2_224_BLOCK_SIZE,
+    .max_digest_size = TCHASH_SHA2_224_DIGEST_SIZE,
+    .dynamic_digest_size = false,
+
+    .cb_init = tchash_i_sha2_224_cb_init,
+    .cb_process = tchash_i_sha2_224_cb_process,
+    .cb_get = tchash_i_sha2_224_cb_get,
+
+    .cb_oneshot = tchash_i_sha2_224_cb_oneshot,
+};
+
+
+TCHash_SHA2_384* tchash_sha2_384_init(TCHash_SHA2_384* sha2_384)
 {
     static const uint64_t InitH[] = {
         UINT64_C(0xcbbb9d5dc1059ed8), UINT64_C(0x629a292a367cd507), UINT64_C(0x9159015a3070dd17), UINT64_C(0x152fecd8f70e5939),
         UINT64_C(0x67332667ffc00b31), UINT64_C(0x8eb44a8768581511), UINT64_C(0xdb0c2e0d64f98fa7), UINT64_C(0x47b5481dbefa4fa4) };
-    if(!sha2) return NULL;
+    if(!sha2_384) return NULL;
 
-    sha2->sha2_512.total.lh[0] = sha2->sha2_512.total.lh[1] = 0;
-    memcpy(sha2->sha2_512.h, InitH, sizeof(InitH));
-    sha2->sha2_512.blen = 0;
+    sha2_384->total.lh[0] = sha2_384->total.lh[1] = 0;
+    memcpy(sha2_384->h, InitH, sizeof(InitH));
+    sha2_384->blen = 0;
 
-    return sha2;
+    return sha2_384;
 }
 void tchash_sha2_384_process(TCHash_SHA2_384* sha2_384, const void* data, size_t dlen)
 {
-    tchash_sha2_512_process(&sha2_384->sha2_512, data, dlen);
+    tchash_sha2_512_process(sha2_384, data, dlen);
 }
-void* tchash_sha2_384_get(TCHash_SHA2_384* sha2_384, void* digest)
+void* tchash_sha2_384_get(const TCHash_SHA2_384* sha2_384, void* digest)
 {
-    TCHash_SHA2_512* sha2_512 = &sha2_384->sha2_512;
+    const TCHash_SHA2_512* sha2_512 = sha2_384;
     TCHASH_I_GET_BODY_(sha2_512,SHA2_512,be,64,{M[14] = (sha2_512->total.lh[1] << 3) | (sha2_512->total.lh[0] >> (64-3)); M[15] = sha2_512->total.lh[0] << 3;},sizeof(h)/sizeof(*h) - 2,TCHASH_SHA2_384_DIGEST_SIZE)
 }
 void* tchash_sha2_384(void* digest, const void* data, size_t dlen) { TCHASH_I_SIMPLE_BODY_(sha2_384,SHA2_384) }
+
+static void tchash_i_sha2_384_cb_init(TCHash* hash)
+{
+    tchash_sha2_384_init(TC__REINTERPRET_CAST(TCHash_SHA2_384*,hash->state));
+}
+static void tchash_i_sha2_384_cb_process(TCHash* hash, const void* data, size_t datalen)
+{
+    tchash_sha2_384_process(TC__REINTERPRET_CAST(TCHash_SHA2_384*,hash->state), data, datalen);
+}
+static void tchash_i_sha2_384_cb_get(const TCHash* hash, void* digest, size_t digestlen)
+{
+    assert(digestlen == TCHASH_SHA2_384_DIGEST_SIZE && "invalid internal digestlen");
+    tchash_sha2_384_get(TC__REINTERPRET_CAST(const TCHash_SHA2_384*,hash->state), digest);
+}
+static void tchash_i_sha2_384_cb_oneshot(const TCHashInfo* hinfo, void* digest, size_t digestlen, const void* data, size_t datalen)
+{
+    assert(digestlen == TCHASH_SHA2_384_DIGEST_SIZE && "invalid internal digestlen");
+    tchash_sha2_384(digest, data, datalen);
+}
+const TCHashInfo tchash_sha2_384_info = {
+    .name = "SHA-384",
+    .aliases = {
+        "SHA384",
+        "SHA-512/384", "SHA512/384",
+        "SHA-2-384", "SHA-2-512/384",
+        "SHA2-384", "SHA2-512/224",
+    },
+
+    .state_size = sizeof(TCHash_SHA2_384),
+    .block_size = TCHASH_SHA2_384_BLOCK_SIZE,
+    .max_digest_size = TCHASH_SHA2_384_DIGEST_SIZE,
+    .dynamic_digest_size = false,
+
+    .cb_init = tchash_i_sha2_384_cb_init,
+    .cb_process = tchash_i_sha2_384_cb_process,
+    .cb_get = tchash_i_sha2_384_cb_get,
+
+    .cb_oneshot = tchash_i_sha2_384_cb_oneshot,
+};
+
 
 TCHash_SHA2_512* tchash_sha2_512_224_init(TCHash_SHA2_512* sha2)
 {
@@ -1905,11 +2909,50 @@ void tchash_sha2_512_224_process(TCHash_SHA2_512* sha2_512, const void* data, si
 {
     tchash_sha2_512_process(sha2_512, data, dlen);
 }
-void* tchash_sha2_512_224_get(TCHash_SHA2_512* sha2_512, void* digest)
+void* tchash_sha2_512_224_get(const TCHash_SHA2_512* sha2_512, void* digest)
 {
     TCHASH_I_GET_BODY_(sha2_512,SHA2_512,be,64,{M[14] = (sha2_512->total.lh[1] << 3) | (sha2_512->total.lh[0] >> (64-3)); M[15] = sha2_512->total.lh[0] << 3;},sizeof(h)/sizeof(*h) - 4,TCHASH_SHA2_512_224_DIGEST_SIZE)
 }
 void* tchash_sha2_512_224(void* digest, const void* data, size_t dlen) { TCHASH_I_SIMPLE_BODY_(sha2_512_224,SHA2_512_224) }
+
+static void tchash_i_sha2_512_224_cb_init(TCHash* hash)
+{
+    tchash_sha2_512_224_init(TC__REINTERPRET_CAST(TCHash_SHA2_512_224*,hash->state));
+}
+static void tchash_i_sha2_512_224_cb_process(TCHash* hash, const void* data, size_t datalen)
+{
+    tchash_sha2_512_224_process(TC__REINTERPRET_CAST(TCHash_SHA2_512_224*,hash->state), data, datalen);
+}
+static void tchash_i_sha2_512_224_cb_get(const TCHash* hash, void* digest, size_t digestlen)
+{
+    assert(digestlen == TCHASH_SHA2_512_224_DIGEST_SIZE && "invalid internal digestlen");
+    tchash_sha2_512_224_get(TC__REINTERPRET_CAST(const TCHash_SHA2_512_224*,hash->state), digest);
+}
+static void tchash_i_sha2_512_224_cb_oneshot(const TCHashInfo* hinfo, void* digest, size_t digestlen, const void* data, size_t datalen)
+{
+    assert(digestlen == TCHASH_SHA2_512_224_DIGEST_SIZE && "invalid internal digestlen");
+    tchash_sha2_512_224(digest, data, datalen);
+}
+const TCHashInfo tchash_sha2_512_224_info = {
+    .name = "SHA-512/224",
+    .aliases = {
+        "SHA512/224",
+        "SHA-2-512/224",
+        "SHA2-512/224",
+    },
+
+    .state_size = sizeof(TCHash_SHA2_512_224),
+    .block_size = TCHASH_SHA2_512_224_BLOCK_SIZE,
+    .max_digest_size = TCHASH_SHA2_512_224_DIGEST_SIZE,
+    .dynamic_digest_size = false,
+
+    .cb_init = tchash_i_sha2_512_224_cb_init,
+    .cb_process = tchash_i_sha2_512_224_cb_process,
+    .cb_get = tchash_i_sha2_512_224_cb_get,
+
+    .cb_oneshot = tchash_i_sha2_512_224_cb_oneshot,
+};
+
 
 TCHash_SHA2_512* tchash_sha2_512_256_init(TCHash_SHA2_512* sha2)
 {
@@ -1928,12 +2971,49 @@ void tchash_sha2_512_256_process(TCHash_SHA2_512* sha2_512, const void* data, si
 {
     tchash_sha2_512_process(sha2_512, data, dlen);
 }
-void* tchash_sha2_512_256_get(TCHash_SHA2_512* sha2_512, void* digest)
+void* tchash_sha2_512_256_get(const TCHash_SHA2_512* sha2_512, void* digest)
 {
     TCHASH_I_GET_BODY_(sha2_512,SHA2_512,be,64,{M[14] = (sha2_512->total.lh[1] << 3) | (sha2_512->total.lh[0] >> (64-3)); M[15] = sha2_512->total.lh[0] << 3;},sizeof(h)/sizeof(*h) - 4,TCHASH_SHA2_512_256_DIGEST_SIZE)
 }
 void* tchash_sha2_512_256(void* digest, const void* data, size_t dlen) { TCHASH_I_SIMPLE_BODY_(sha2_512_256,SHA2_512_256) }
 
+static void tchash_i_sha2_512_256_cb_init(TCHash* hash)
+{
+    tchash_sha2_512_256_init(TC__REINTERPRET_CAST(TCHash_SHA2_512_256*,hash->state));
+}
+static void tchash_i_sha2_512_256_cb_process(TCHash* hash, const void* data, size_t datalen)
+{
+    tchash_sha2_512_256_process(TC__REINTERPRET_CAST(TCHash_SHA2_512_256*,hash->state), data, datalen);
+}
+static void tchash_i_sha2_512_256_cb_get(const TCHash* hash, void* digest, size_t digestlen)
+{
+    assert(digestlen == TCHASH_SHA2_512_256_DIGEST_SIZE && "invalid internal digestlen");
+    tchash_sha2_512_256_get(TC__REINTERPRET_CAST(const TCHash_SHA2_512_256*,hash->state), digest);
+}
+static void tchash_i_sha2_512_256_cb_oneshot(const TCHashInfo* hinfo, void* digest, size_t digestlen, const void* data, size_t datalen)
+{
+    assert(digestlen == TCHASH_SHA2_512_256_DIGEST_SIZE && "invalid internal digestlen");
+    tchash_sha2_512_256(digest, data, datalen);
+}
+const TCHashInfo tchash_sha2_512_256_info = {
+    .name = "SHA-512/256",
+    .aliases = {
+        "SHA512/256",
+        "SHA-2-512/256",
+        "SHA2-512/256",
+    },
+
+    .state_size = sizeof(TCHash_SHA2_512_256),
+    .block_size = TCHASH_SHA2_512_256_BLOCK_SIZE,
+    .max_digest_size = TCHASH_SHA2_512_256_DIGEST_SIZE,
+    .dynamic_digest_size = false,
+
+    .cb_init = tchash_i_sha2_512_256_cb_init,
+    .cb_process = tchash_i_sha2_512_256_cb_process,
+    .cb_get = tchash_i_sha2_512_256_cb_get,
+
+    .cb_oneshot = tchash_i_sha2_512_256_cb_oneshot,
+};
 
 
 #define TCHASH_I_KECCAK1600_L   6
@@ -2099,11 +3179,48 @@ void tchash_sha3_224_process(TCHash_SHA3_224* sha3_224, const void* data, size_t
 {
     TCHASH_I_PROCESS_BODY_(sha3_224,SHA3_224,le,64,/*{sha3_224->total+=dlen;}*/)
 }
-void* tchash_sha3_224_get(TCHash_SHA3_224* sha3_224, void* digest)
+void* tchash_sha3_224_get(const TCHash_SHA3_224* sha3_224, void* digest)
 {
     TCHASH_I_GETKECCAK_BODY_SHA3_(sha3_224,SHA3_224)
 }
 void* tchash_sha3_224(void* digest, const void* data, size_t dlen) { TCHASH_I_SIMPLE_BODY_(sha3_224,SHA3_224) }
+
+static void tchash_i_sha3_224_cb_init(TCHash* hash)
+{
+    tchash_sha3_224_init(TC__REINTERPRET_CAST(TCHash_SHA3_224*,hash->state));
+}
+static void tchash_i_sha3_224_cb_process(TCHash* hash, const void* data, size_t datalen)
+{
+    tchash_sha3_224_process(TC__REINTERPRET_CAST(TCHash_SHA3_224*,hash->state), data, datalen);
+}
+static void tchash_i_sha3_224_cb_get(const TCHash* hash, void* digest, size_t digestlen)
+{
+    assert(digestlen == TCHASH_SHA3_224_DIGEST_SIZE && "invalid internal digestlen");
+    tchash_sha3_224_get(TC__REINTERPRET_CAST(const TCHash_SHA3_224*,hash->state), digest);
+}
+static void tchash_i_sha3_224_cb_oneshot(const TCHashInfo* hinfo, void* digest, size_t digestlen, const void* data, size_t datalen)
+{
+    assert(digestlen == TCHASH_SHA3_224_DIGEST_SIZE && "invalid internal digestlen");
+    tchash_sha3_224(digest, data, datalen);
+}
+const TCHashInfo tchash_sha3_224_info = {
+    .name = "SHA-3-224",
+    .aliases = {
+        "SHA3-224",
+    },
+
+    .state_size = sizeof(TCHash_SHA3_224),
+    .block_size = TCHASH_SHA3_224_BLOCK_SIZE,
+    .max_digest_size = TCHASH_SHA3_224_DIGEST_SIZE,
+    .dynamic_digest_size = false,
+
+    .cb_init = tchash_i_sha3_224_cb_init,
+    .cb_process = tchash_i_sha3_224_cb_process,
+    .cb_get = tchash_i_sha3_224_cb_get,
+
+    .cb_oneshot = tchash_i_sha3_224_cb_oneshot,
+};
+
 
 TCHash_SHA3_256* tchash_sha3_256_init(TCHash_SHA3_256* sha3_256)
 {
@@ -2120,11 +3237,48 @@ void tchash_sha3_256_process(TCHash_SHA3_256* sha3_256, const void* data, size_t
 {
     TCHASH_I_PROCESS_BODY_(sha3_256,SHA3_256,le,64,/*{sha3_256->total+=dlen;}*/)
 }
-void* tchash_sha3_256_get(TCHash_SHA3_256* sha3_256, void* digest)
+void* tchash_sha3_256_get(const TCHash_SHA3_256* sha3_256, void* digest)
 {
     TCHASH_I_GETKECCAK_BODY_SHA3_(sha3_256,SHA3_256)
 }
 void* tchash_sha3_256(void* digest, const void* data, size_t dlen) { TCHASH_I_SIMPLE_BODY_(sha3_256,SHA3_256) }
+
+static void tchash_i_sha3_256_cb_init(TCHash* hash)
+{
+    tchash_sha3_256_init(TC__REINTERPRET_CAST(TCHash_SHA3_256*,hash->state));
+}
+static void tchash_i_sha3_256_cb_process(TCHash* hash, const void* data, size_t datalen)
+{
+    tchash_sha3_256_process(TC__REINTERPRET_CAST(TCHash_SHA3_256*,hash->state), data, datalen);
+}
+static void tchash_i_sha3_256_cb_get(const TCHash* hash, void* digest, size_t digestlen)
+{
+    assert(digestlen == TCHASH_SHA3_256_DIGEST_SIZE && "invalid internal digestlen");
+    tchash_sha3_256_get(TC__REINTERPRET_CAST(const TCHash_SHA3_256*,hash->state), digest);
+}
+static void tchash_i_sha3_256_cb_oneshot(const TCHashInfo* hinfo, void* digest, size_t digestlen, const void* data, size_t datalen)
+{
+    assert(digestlen == TCHASH_SHA3_256_DIGEST_SIZE && "invalid internal digestlen");
+    tchash_sha3_256(digest, data, datalen);
+}
+const TCHashInfo tchash_sha3_256_info = {
+    .name = "SHA-3-256",
+    .aliases = {
+        "SHA3-256",
+    },
+
+    .state_size = sizeof(TCHash_SHA3_256),
+    .block_size = TCHASH_SHA3_256_BLOCK_SIZE,
+    .max_digest_size = TCHASH_SHA3_256_DIGEST_SIZE,
+    .dynamic_digest_size = false,
+
+    .cb_init = tchash_i_sha3_256_cb_init,
+    .cb_process = tchash_i_sha3_256_cb_process,
+    .cb_get = tchash_i_sha3_256_cb_get,
+
+    .cb_oneshot = tchash_i_sha3_256_cb_oneshot,
+};
+
 
 TCHash_SHA3_384* tchash_sha3_384_init(TCHash_SHA3_384* sha3_384)
 {
@@ -2141,11 +3295,48 @@ void tchash_sha3_384_process(TCHash_SHA3_384* sha3_384, const void* data, size_t
 {
     TCHASH_I_PROCESS_BODY_(sha3_384,SHA3_384,le,64,/*{sha3_384->total+=dlen;}*/)
 }
-void* tchash_sha3_384_get(TCHash_SHA3_384* sha3_384, void* digest)
+void* tchash_sha3_384_get(const TCHash_SHA3_384* sha3_384, void* digest)
 {
     TCHASH_I_GETKECCAK_BODY_SHA3_(sha3_384,SHA3_384)
 }
 void* tchash_sha3_384(void* digest, const void* data, size_t dlen) { TCHASH_I_SIMPLE_BODY_(sha3_384,SHA3_384) }
+
+static void tchash_i_sha3_384_cb_init(TCHash* hash)
+{
+    tchash_sha3_384_init(TC__REINTERPRET_CAST(TCHash_SHA3_384*,hash->state));
+}
+static void tchash_i_sha3_384_cb_process(TCHash* hash, const void* data, size_t datalen)
+{
+    tchash_sha3_384_process(TC__REINTERPRET_CAST(TCHash_SHA3_384*,hash->state), data, datalen);
+}
+static void tchash_i_sha3_384_cb_get(const TCHash* hash, void* digest, size_t digestlen)
+{
+    assert(digestlen == TCHASH_SHA3_384_DIGEST_SIZE && "invalid internal digestlen");
+    tchash_sha3_384_get(TC__REINTERPRET_CAST(const TCHash_SHA3_384*,hash->state), digest);
+}
+static void tchash_i_sha3_384_cb_oneshot(const TCHashInfo* hinfo, void* digest, size_t digestlen, const void* data, size_t datalen)
+{
+    assert(digestlen == TCHASH_SHA3_384_DIGEST_SIZE && "invalid internal digestlen");
+    tchash_sha3_384(digest, data, datalen);
+}
+const TCHashInfo tchash_sha3_384_info = {
+    .name = "SHA-3-384",
+    .aliases = {
+        "SHA3-384",
+    },
+
+    .state_size = sizeof(TCHash_SHA3_384),
+    .block_size = TCHASH_SHA3_384_BLOCK_SIZE,
+    .max_digest_size = TCHASH_SHA3_384_DIGEST_SIZE,
+    .dynamic_digest_size = false,
+
+    .cb_init = tchash_i_sha3_384_cb_init,
+    .cb_process = tchash_i_sha3_384_cb_process,
+    .cb_get = tchash_i_sha3_384_cb_get,
+
+    .cb_oneshot = tchash_i_sha3_384_cb_oneshot,
+};
+
 
 TCHash_SHA3_512* tchash_sha3_512_init(TCHash_SHA3_512* sha3_512)
 {
@@ -2162,11 +3353,47 @@ void tchash_sha3_512_process(TCHash_SHA3_512* sha3_512, const void* data, size_t
 {
     TCHASH_I_PROCESS_BODY_(sha3_512,SHA3_512,le,64,/*{sha3_512->total+=dlen;}*/)
 }
-void* tchash_sha3_512_get(TCHash_SHA3_512* sha3_512, void* digest)
+void* tchash_sha3_512_get(const TCHash_SHA3_512* sha3_512, void* digest)
 {
     TCHASH_I_GETKECCAK_BODY_SHA3_(sha3_512,SHA3_512)
 }
 void* tchash_sha3_512(void* digest, const void* data, size_t dlen) { TCHASH_I_SIMPLE_BODY_(sha3_512,SHA3_512) }
+
+static void tchash_i_sha3_512_cb_init(TCHash* hash)
+{
+    tchash_sha3_512_init(TC__REINTERPRET_CAST(TCHash_SHA3_512*,hash->state));
+}
+static void tchash_i_sha3_512_cb_process(TCHash* hash, const void* data, size_t datalen)
+{
+    tchash_sha3_512_process(TC__REINTERPRET_CAST(TCHash_SHA3_512*,hash->state), data, datalen);
+}
+static void tchash_i_sha3_512_cb_get(const TCHash* hash, void* digest, size_t digestlen)
+{
+    assert(digestlen == TCHASH_SHA3_512_DIGEST_SIZE && "invalid internal digestlen");
+    tchash_sha3_512_get(TC__REINTERPRET_CAST(const TCHash_SHA3_512*,hash->state), digest);
+}
+static void tchash_i_sha3_512_cb_oneshot(const TCHashInfo* hinfo, void* digest, size_t digestlen, const void* data, size_t datalen)
+{
+    assert(digestlen == TCHASH_SHA3_512_DIGEST_SIZE && "invalid internal digestlen");
+    tchash_sha3_512(digest, data, datalen);
+}
+const TCHashInfo tchash_sha3_512_info = {
+    .name = "SHA-3-512",
+    .aliases = {
+        "SHA3-512",
+    },
+
+    .state_size = sizeof(TCHash_SHA3_512),
+    .block_size = TCHASH_SHA3_512_BLOCK_SIZE,
+    .max_digest_size = TCHASH_SHA3_512_DIGEST_SIZE,
+    .dynamic_digest_size = false,
+
+    .cb_init = tchash_i_sha3_512_cb_init,
+    .cb_process = tchash_i_sha3_512_cb_process,
+    .cb_get = tchash_i_sha3_512_cb_get,
+
+    .cb_oneshot = tchash_i_sha3_512_cb_oneshot,
+};
 
 
 
@@ -2185,11 +3412,46 @@ void tchash_shake128_process(TCHash_SHAKE128* shake128, const void* data, size_t
 {
     TCHASH_I_PROCESS_BODY_(shake128,SHAKE128,le,64,/*{shake128->total+=dlen;}*/)
 }
-void* tchash_shake128_get(TCHash_SHAKE128* shake128, void* digest, size_t digestlen)
+void* tchash_shake128_get(const TCHash_SHAKE128* shake128, void* digest, size_t digestlen)
 {
     TCHASH_I_GETKECCAK_BODY_SHAKE_(shake128,SHAKE128,digestlen)
 }
 void* tchash_shake128(void* digest, size_t digestlen, const void* data, size_t dlen) { TCHASH_I_SIMPLELEN_BODY_(shake128,SHAKE128) }
+
+static void tchash_i_shake128_cb_init(TCHash* hash)
+{
+    tchash_shake128_init(TC__REINTERPRET_CAST(TCHash_SHAKE128*,hash->state));
+}
+static void tchash_i_shake128_cb_process(TCHash* hash, const void* data, size_t datalen)
+{
+    tchash_shake128_process(TC__REINTERPRET_CAST(TCHash_SHAKE128*,hash->state), data, datalen);
+}
+static void tchash_i_shake128_cb_get(const TCHash* hash, void* digest, size_t digestlen)
+{
+    tchash_shake128_get(TC__REINTERPRET_CAST(const TCHash_SHAKE128*,hash->state), digest, digestlen);
+}
+static void tchash_i_shake128_cb_oneshot(const TCHashInfo* hinfo, void* digest, size_t digestlen, const void* data, size_t datalen)
+{
+    tchash_shake128(digest, digestlen, data, datalen);
+}
+const TCHashInfo tchash_shake128_info = {
+    .name = "SHAKE-128",
+    .aliases = {
+        "SHAKE128",
+    },
+
+    .state_size = sizeof(TCHash_SHAKE128),
+    .block_size = TCHASH_SHAKE128_BLOCK_SIZE,
+    .max_digest_size = 0,
+    .dynamic_digest_size = true,
+
+    .cb_init = tchash_i_shake128_cb_init,
+    .cb_process = tchash_i_shake128_cb_process,
+    .cb_get = tchash_i_shake128_cb_get,
+
+    .cb_oneshot = tchash_i_shake128_cb_oneshot,
+};
+
 
 TCHash_SHAKE256* tchash_shake256_init(TCHash_SHAKE256* shake256)
 {
@@ -2206,10 +3468,45 @@ void tchash_shake256_process(TCHash_SHAKE256* shake256, const void* data, size_t
 {
     TCHASH_I_PROCESS_BODY_(shake256,SHAKE256,le,64,/*{shake256->total+=dlen;}*/)
 }
-void* tchash_shake256_get(TCHash_SHAKE256* shake256, void* digest, size_t digestlen)
+void* tchash_shake256_get(const TCHash_SHAKE256* shake256, void* digest, size_t digestlen)
 {
     TCHASH_I_GETKECCAK_BODY_SHAKE_(shake256,SHAKE256,digestlen)
 }
 void* tchash_shake256(void* digest, size_t digestlen, const void* data, size_t dlen) { TCHASH_I_SIMPLELEN_BODY_(shake256,SHAKE256) }
+
+static void tchash_i_shake256_cb_init(TCHash* hash)
+{
+    tchash_shake256_init(TC__REINTERPRET_CAST(TCHash_SHAKE256*,hash->state));
+}
+static void tchash_i_shake256_cb_process(TCHash* hash, const void* data, size_t datalen)
+{
+    tchash_shake256_process(TC__REINTERPRET_CAST(TCHash_SHAKE256*,hash->state), data, datalen);
+}
+static void tchash_i_shake256_cb_get(const TCHash* hash, void* digest, size_t digestlen)
+{
+    tchash_shake256_get(TC__REINTERPRET_CAST(const TCHash_SHAKE256*,hash->state), digest, digestlen);
+}
+static void tchash_i_shake256_cb_oneshot(const TCHashInfo* hinfo, void* digest, size_t digestlen, const void* data, size_t datalen)
+{
+    tchash_shake256(digest, digestlen, data, datalen);
+}
+const TCHashInfo tchash_shake256_info = {
+    .name = "SHAKE-256",
+    .aliases = {
+        "SHAKE256",
+    },
+
+    .state_size = sizeof(TCHash_SHAKE256),
+    .block_size = TCHASH_SHAKE256_BLOCK_SIZE,
+    .max_digest_size = 0,
+    .dynamic_digest_size = true,
+
+    .cb_init = tchash_i_shake256_cb_init,
+    .cb_process = tchash_i_shake256_cb_process,
+    .cb_get = tchash_i_shake256_cb_get,
+
+    .cb_oneshot = tchash_i_shake256_cb_oneshot,
+};
+
 
 #endif /* TC_HASH_IMPLEMENTATION */
